@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Binary Prediction Terminal"
+version = "1.0.0"
+id = "artifacts/trading-terminal"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24411
+
+[services.development]
+run = "pnpm --filter @workspace/trading-terminal run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/trading-terminal", "run", "build" ]
+publicDir = "artifacts/trading-terminal/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24411"
+BASE_PATH = "/"

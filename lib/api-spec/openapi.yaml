@@ -1,22 +1,24 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Binary Prediction Terminal API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: market
+    description: Market data operations
+  - name: trades
+    description: Simulated trade operations
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +26,180 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /market/symbols:
+    get:
+      operationId: getMarketSymbols
+      tags: [market]
+      summary: Get available trading symbols
+      responses:
+        "200":
+          description: List of symbols
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MarketSymbol"
+
+  /market/historical/{symbol}:
+    get:
+      operationId: getHistoricalData
+      tags: [market]
+      summary: Get historical OHLC data for a symbol
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: interval
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "1min"
+      responses:
+        "200":
+          description: Historical candles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Candle"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /market/signal/{symbol}:
+    get:
+      operationId: getMarketSignal
+      tags: [market]
+      summary: Get current AI signal analysis for a symbol
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Signal analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalAnalysis"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /trades:
+    get:
+      operationId: getTradeHistory
+      tags: [trades]
+      summary: Get simulated trade history
+      parameters:
+        - name: symbol
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Trade history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Trade"
+    post:
+      operationId: createSimulatedTrade
+      tags: [trades]
+      summary: Log a simulated trade
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTradeBody"
+      responses:
+        "201":
+          description: Trade created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trade"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /trades/stats:
+    get:
+      operationId: getTradeStats
+      tags: [trades]
+      summary: Get accuracy stats and performance metrics
+      parameters:
+        - name: symbol
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TradeStats"
+
+  /trades/{id}/resolve:
+    patch:
+      operationId: resolveSimulatedTrade
+      tags: [trades]
+      summary: Resolve a trade outcome (win/loss)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveTradeBody"
+      responses:
+        "200":
+          description: Trade resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trade"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +210,212 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    MarketSymbol:
+      type: object
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+      required:
+        - symbol
+        - name
+        - type
+
+    Candle:
+      type: object
+      properties:
+        time:
+          type: number
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+        volume:
+          type: number
+      required:
+        - time
+        - open
+        - high
+        - low
+        - close
+        - volume
+
+    SignalAnalysis:
+      type: object
+      properties:
+        symbol:
+          type: string
+        direction:
+          type: string
+        confidence:
+          type: number
+        safeMode:
+          type: boolean
+        reasons:
+          type: array
+          items:
+            type: string
+        indicators:
+          $ref: "#/components/schemas/IndicatorValues"
+        timestamp:
+          type: string
+      required:
+        - symbol
+        - direction
+        - confidence
+        - safeMode
+        - reasons
+        - indicators
+        - timestamp
+
+    IndicatorValues:
+      type: object
+      properties:
+        rsi:
+          type: number
+        macd:
+          type: number
+        macdSignal:
+          type: number
+        macdHistogram:
+          type: number
+        bbUpper:
+          type: number
+        bbMiddle:
+          type: number
+        bbLower:
+          type: number
+        entropy:
+          type: number
+        volatility:
+          type: number
+      required:
+        - rsi
+        - macd
+        - macdSignal
+        - macdHistogram
+        - bbUpper
+        - bbMiddle
+        - bbLower
+        - entropy
+        - volatility
+
+    Trade:
+      type: object
+      properties:
+        id:
+          type: integer
+        symbol:
+          type: string
+        direction:
+          type: string
+        entryPrice:
+          type: number
+        exitPrice:
+          type: ["number", "null"]
+        confidence:
+          type: number
+        expirySeconds:
+          type: integer
+        outcome:
+          type: ["string", "null"]
+        reasons:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+        resolvedAt:
+          type: ["string", "null"]
+      required:
+        - id
+        - symbol
+        - direction
+        - entryPrice
+        - exitPrice
+        - confidence
+        - expirySeconds
+        - outcome
+        - reasons
+        - createdAt
+        - resolvedAt
+
+    CreateTradeBody:
+      type: object
+      properties:
+        symbol:
+          type: string
+        direction:
+          type: string
+        entryPrice:
+          type: number
+        confidence:
+          type: number
+        expirySeconds:
+          type: integer
+        reasons:
+          type: array
+          items:
+            type: string
+      required:
+        - symbol
+        - direction
+        - entryPrice
+        - confidence
+        - expirySeconds
+        - reasons
+
+    ResolveTradeBody:
+      type: object
+      properties:
+        exitPrice:
+          type: number
+        outcome:
+          type: string
+      required:
+        - exitPrice
+        - outcome
+
+    TradeStats:
+      type: object
+      properties:
+        totalTrades:
+          type: integer
+        wins:
+          type: integer
+        losses:
+          type: integer
+        pending:
+          type: integer
+        winRate:
+          type: number
+        avgConfidence:
+          type: number
+        bestStreak:
+          type: integer
+        currentStreak:
+          type: integer
+      required:
+        - totalTrades
+        - wins
+        - losses
+        - pending
+        - winRate
+        - avgConfidence
+        - bestStreak
+        - currentStreak
