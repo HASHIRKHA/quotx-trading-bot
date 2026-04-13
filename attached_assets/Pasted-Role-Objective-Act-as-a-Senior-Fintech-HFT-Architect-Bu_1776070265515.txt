@@ -1,0 +1,40 @@
+Role & Objective:
+"Act as a Senior Fintech & HFT Architect. Build a high-performance, single-user Binary Prediction Terminal mirroring the Quotex (market-qx.trade) ecosystem. The primary goal is sub-millisecond execution and a verified prediction accuracy exceeding 70%. This system is strictly for educational market analysis; it must contain NO deposit or real-money functionality
+.
+1. High-Performance Core & Speed Layer:
+Backend Stack: Use Node.js/Express for non-blocking asynchronous event loops or Go (Golang) for institutional-grade multithreading
+.
+Speed Layer: Integrate Redis for in-memory price caching. The Matching Engine must calculate results against the exact millisecond of expiry to prevent discrepancies; even a 1ms delay is a failure
+.
+Database: Use PostgreSQL for persistent logs of all simulated transactions and accuracy metrics
+.
+2. Real-Time Data & Advanced Charting:
+Primary Feed: Establish a persistent WebSocket connection to Twelve Data for real-time Forex (EUR/USD) and Crypto (BTC/USD) ticks with a latency target under 100ms
+.
+Historical Sync: Use the Alpha Vantage API to fetch historical OHLC data on startup to pre-populate charts
+.
+Visual Engine: Use the Lightweight Charts library. Implement CSS-based 'glow effects' for candles and a 'vertical bounce' for price ticks
+.
+Animations: Use Framer Motion for UI transitions. New candles must have a smooth fade-in effect
+.
+3. The 'Quantum' AI Reasoner & Indicators:
+Signal Engine: Implement a multi-factor analysis module using Support Vector Machines (SVM) for binary classification (Up/Down) or ANN (Artificial Neural Networks) to identify macro-patterns
+.
+Indicator Suite: Include animated RSI (14), MACD (12, 26, 9), Bollinger Bands (20, 2), and Ichimoku Cloud
+.
+Intelligent Alerts: When indicators hit extreme levels (e.g., RSI > 70), the chart area must pulsate visually. Trigger a 'ping' animation at MACD crossover points
+.
+Reasoning Sidebar: A panel must print a live technical explanation for each signal and a dynamic Confidence Meter (e.g., '97% Confidence: RSI Oversold + MACD Bullish Cross')
+.
+4. Advanced Predictive Functions (Strength Upgrades):
+Market Entropy Calculation: Implement an algorithm to measure market randomness. If entropy is too high (high noise), the bot must enter 'Safe Mode' and skip signals
+.
+Noise & Volatility Filter: Automatically pause predictions during high-volatility news events to maintain the 70%+ accuracy goal
+.
+Formation Countdown: Display a 3-second countdown timer specifically for the next candle's formation to ensure perfect entry timing
+.
+5. Zero-Trust Security Protocol:
+Architecture: Every internal microservice call must be authorized.
+Secrets Management: Strictly use Replit Secrets for TWELVE_DATA_API_KEY and ALPHA_VANTAGE_API_KEY. Hardcoding is a critical security breach
+.
+Kill-Switch: Implement an automated circuit breaker that pauses the feed if WebSocket latency exceeds 500ms
