@@ -1,6 +1,7 @@
 import WebSocket from "ws";
 import { logger } from "./logger.js";
 import type { OHLC } from "./signals.js";
+import { generateSeedCandles } from "./seedCandles.js";
 
 export interface PriceTick {
   symbol: string;
@@ -21,7 +22,7 @@ let ws: WebSocket | null = null;
 let latency = 0;
 let latencyBreached = false;
 let reconnectTimer: NodeJS.Timeout | null = null;
-let lastPingTime = Date.now();
+let pingTimestamp = 0;
 
 const LATENCY_THRESHOLD = 500;
 const MAX_CANDLES = 300;
@@ -87,35 +88,49 @@ function connectTwelveData(): void {
   }
 
   logger.info("Connecting to Twelve Data WebSocket...");
-
   ws = new WebSocket(`${TWELVE_DATA_WS}?apikey=${apiKey}`);
+
+  let pingInterval: NodeJS.Timeout | null = null;
 
   ws.on("open", () => {
     logger.info("Twelve Data WS connected");
-    lastPingTime = Date.now();
+    latencyBreached = false;
 
     const subscribeMsg = {
       action: "subscribe",
       params: { symbols: SYMBOLS.join(",") },
     };
     ws!.send(JSON.stringify(subscribeMsg));
+
+    pingInterval = setInterval(() => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        pingTimestamp = Date.now();
+        ws.ping();
+      }
+    }, 5000);
+  });
+
+  ws.on("pong", () => {
+    if (pingTimestamp > 0) {
+      const rtt = Date.now() - pingTimestamp;
+      latency = rtt;
+      pingTimestamp = 0;
+
+      if (rtt > LATENCY_THRESHOLD) {
+        if (!latencyBreached) {
+          logger.warn({ latency: rtt }, "Circuit breaker triggered — latency exceeded threshold");
+          latencyBreached = true;
+        }
+      } else {
+        if (latencyBreached) {
+          logger.info({ latency: rtt }, "Circuit breaker reset — latency back to normal");
+          latencyBreached = false;
+        }
+      }
+    }
   });
 
   ws.on("message", (raw: Buffer | string) => {
-    const now = Date.now();
-    latency = now - lastPingTime;
-
-    if (latency > LATENCY_THRESHOLD) {
-      if (!latencyBreached) {
-        logger.warn({ latency }, "Circuit breaker triggered — latency exceeded threshold");
-        latencyBreached = true;
-      }
-    } else {
-      latencyBreached = false;
-    }
-
-    lastPingTime = now;
-
     let msg: { event?: string; symbol?: string; price?: string | number; timestamp?: string | number };
     try {
       msg = JSON.parse(raw.toString());
@@ -148,20 +163,21 @@ function connectTwelveData(): void {
 
   ws.on("close", (code) => {
     logger.warn({ code }, "Twelve Data WS closed — reconnecting in 3s");
+    if (pingInterval) clearInterval(pingInterval);
     ws = null;
+    latencyBreached = false;
+    latency = 0;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(connectTwelveData, 3000);
   });
-
-  const pingInterval = setInterval(() => {
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.ping();
-    }
-  }, 10000);
-
-  ws.on("close", () => clearInterval(pingInterval));
 }
 
 export function initTwelveData(): void {
+  for (const sym of SYMBOLS) {
+    if (!candleCache.has(sym)) {
+      candleCache.set(sym, generateSeedCandles(sym));
+      logger.info({ symbol: sym }, "Pre-seeded candle cache with synthetic data");
+    }
+  }
   connectTwelveData();
 }

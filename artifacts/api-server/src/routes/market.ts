@@ -2,13 +2,15 @@ import { Router, type IRouter } from "express";
 import { getCandles, getPrice } from "../lib/twelvedata.js";
 import { fetchHistoricalForex } from "../lib/alphavantage.js";
 import { analyzeSignal } from "../lib/signals.js";
-import {
-  GetMarketSignalParams,
-  GetHistoricalDataParams,
-  GetHistoricalDataQueryParams,
-} from "@workspace/api-zod";
+import { GetHistoricalDataQueryParams } from "@workspace/api-zod";
 
 const router: IRouter = Router();
+
+function extractSymbol(req: { params: Record<string, string | string[]> }): string {
+  const splat = req.params["splat"];
+  const raw = Array.isArray(splat) ? splat.join("/") : (splat ?? "");
+  return decodeURIComponent(raw);
+}
 
 router.get("/market/symbols", async (_req, res): Promise<void> => {
   res.json([
@@ -17,17 +19,15 @@ router.get("/market/symbols", async (_req, res): Promise<void> => {
   ]);
 });
 
-router.get("/market/historical/:symbol", async (req, res): Promise<void> => {
-  const params = GetHistoricalDataParams.safeParse({ symbol: decodeURIComponent(req.params.symbol ?? "") });
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
+router.get("/market/historical/*splat", async (req, res): Promise<void> => {
+  const symbol = extractSymbol(req);
+  if (!symbol) {
+    res.status(400).json({ error: "Missing symbol" });
     return;
   }
 
   const qp = GetHistoricalDataQueryParams.safeParse(req.query);
   const interval = qp.success ? (qp.data.interval ?? "1min") : "1min";
-
-  const symbol = params.data.symbol;
 
   let candles = getCandles(symbol);
 
@@ -38,14 +38,13 @@ router.get("/market/historical/:symbol", async (req, res): Promise<void> => {
   res.json(candles);
 });
 
-router.get("/market/signal/:symbol", async (req, res): Promise<void> => {
-  const params = GetMarketSignalParams.safeParse({ symbol: decodeURIComponent(req.params.symbol ?? "") });
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
+router.get("/market/signal/*splat", async (req, res): Promise<void> => {
+  const symbol = extractSymbol(req);
+  if (!symbol) {
+    res.status(400).json({ error: "Missing symbol" });
     return;
   }
 
-  const symbol = params.data.symbol;
   let candles = getCandles(symbol);
 
   if (candles.length < 5) {

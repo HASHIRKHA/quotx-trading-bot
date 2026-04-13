@@ -114,8 +114,8 @@ export function analyzeSignal(candles: OHLC[]): SignalResult {
     volatility,
   };
 
-  const ENTROPY_THRESHOLD = 0.85;
-  const VOLATILITY_THRESHOLD = 0.025;
+  const ENTROPY_THRESHOLD = 0.97;
+  const VOLATILITY_THRESHOLD = 0.04;
 
   if (entropy > ENTROPY_THRESHOLD || volatility > VOLATILITY_THRESHOLD) {
     return {
