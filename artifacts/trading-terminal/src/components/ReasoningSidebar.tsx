@@ -1,7 +1,7 @@
 import React from 'react';
 import { SignalAnalysis, useGetMarketSignal, getGetMarketSignalQueryKey } from '@workspace/api-client-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowUp, ArrowDown, RefreshCw, AlertTriangle } from 'lucide-react';
+import { ArrowUp, ArrowDown, RefreshCw, AlertTriangle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -17,6 +17,8 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis, 
   }
 
   const isUp = signal.direction === 'UP';
+  const isNeutral = signal.direction === 'NEUTRAL';
+  const isWarming = signal.warming === true;
   const color = signal.confidence > 70 ? '#22c55e' : signal.confidence > 50 ? '#f59e0b' : '#6b7280';
   const colorClass = signal.confidence > 70 ? 'text-green-500' : signal.confidence > 50 ? 'text-amber-500' : 'text-gray-500';
 
@@ -39,43 +41,82 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis, 
             cy="50"
             r="45"
             fill="transparent"
-            stroke={color}
+            stroke={isWarming ? '#6b7280' : color}
             strokeWidth="10"
             strokeDasharray="283"
             initial={{ strokeDashoffset: 283 }}
-            animate={{ strokeDashoffset: 283 - (283 * signal.confidence) / 100 }}
+            animate={{ strokeDashoffset: isWarming ? 283 : 283 - (283 * signal.confidence) / 100 }}
             transition={{ duration: 1, ease: "easeOut" }}
           />
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span className={`text-2xl font-bold font-mono ${colorClass}`}>{signal.confidence}%</span>
-          <span className="text-[10px] text-muted-foreground">CONFIDENCE</span>
+          {isWarming ? (
+            <Loader2 size={24} className="text-muted-foreground animate-spin" />
+          ) : (
+            <>
+              <span className={`text-2xl font-bold font-mono ${colorClass}`}>{signal.confidence}%</span>
+              <span className="text-[10px] text-muted-foreground">CONFIDENCE</span>
+            </>
+          )}
         </div>
       </div>
 
-      <motion.div
-        key={signal.direction}
-        initial={{ scale: 0.8, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        className={`flex items-center justify-center gap-2 py-3 rounded-lg border ${isUp ? 'border-green-500/30 bg-green-500/10 text-green-500' : 'border-red-500/30 bg-red-500/10 text-red-500'}`}
-        style={{ boxShadow: isUp ? '0 0 20px rgba(34, 197, 94, 0.2)' : '0 0 20px rgba(239, 68, 68, 0.2)' }}
-      >
-        {isUp ? <ArrowUp size={24} /> : <ArrowDown size={24} />}
-        <span className="text-xl font-bold tracking-widest">{signal.direction}</span>
-      </motion.div>
+      {isWarming ? (
+        <div className="flex items-center justify-center gap-2 py-3 rounded-lg border border-blue-500/30 bg-blue-500/10 text-blue-400">
+          <Loader2 size={18} className="animate-spin" />
+          <span className="text-sm font-bold tracking-widest">WARMING UP</span>
+        </div>
+      ) : (
+        <motion.div
+          key={signal.direction}
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className={`flex items-center justify-center gap-2 py-3 rounded-lg border ${
+            isNeutral
+              ? 'border-gray-500/30 bg-gray-500/10 text-gray-400'
+              : isUp
+              ? 'border-green-500/30 bg-green-500/10 text-green-500'
+              : 'border-red-500/30 bg-red-500/10 text-red-500'
+          }`}
+          style={{
+            boxShadow: isNeutral
+              ? 'none'
+              : isUp
+              ? '0 0 20px rgba(34, 197, 94, 0.2)'
+              : '0 0 20px rgba(239, 68, 68, 0.2)',
+          }}
+        >
+          {!isNeutral && (isUp ? <ArrowUp size={24} /> : <ArrowDown size={24} />)}
+          <span className="text-xl font-bold tracking-widest">{signal.direction}</span>
+        </motion.div>
+      )}
 
       <AnimatePresence>
-        {signal.safeMode && (
+        {signal.safeMode && !isWarming && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="bg-amber-500/10 border border-amber-500/50 rounded-md p-3 flex items-start gap-2 text-amber-500 animate-[safeModePulse_2s_infinite]"
+            className="bg-amber-500/10 border border-amber-500/50 rounded-md p-3 flex items-start gap-2 text-amber-500"
           >
             <AlertTriangle size={16} className="mt-0.5 shrink-0" />
             <div className="text-xs font-mono">
               <strong>SAFE MODE ACTIVE</strong><br/>
               Signal paused due to high market volatility or conflicting indicators.
+            </div>
+          </motion.div>
+        )}
+        {isWarming && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="bg-blue-500/10 border border-blue-500/30 rounded-md p-3 flex items-start gap-2 text-blue-400"
+          >
+            <Loader2 size={16} className="mt-0.5 shrink-0 animate-spin" />
+            <div className="text-xs font-mono">
+              <strong>SIGNAL WARM-UP</strong><br/>
+              Awaiting 5 live market ticks. Entropy analysis suspended until real-time pressure is confirmed.
             </div>
           </motion.div>
         )}

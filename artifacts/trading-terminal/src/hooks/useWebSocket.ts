@@ -5,6 +5,28 @@ interface WebSocketState {
   isConnected: boolean;
   circuitBreaker: boolean;
   latency: number;
+  liveTickCounts: Record<string, number>;
+}
+
+const SYMBOLS = ['EUR/USD', 'BTC/USD'];
+
+function getApiBase(): string {
+  const base = import.meta.env.BASE_URL ?? '/';
+  return base.endsWith('/') ? base.slice(0, -1) : base;
+}
+
+async function fetchInitialQuote(symbol: string): Promise<number | null> {
+  try {
+    const encoded = encodeURIComponent(symbol);
+    const url = `${getApiBase()}/api/market/quote/${encoded}`;
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as { price?: number | null };
+    if (typeof data.price === 'number' && data.price > 0) return data.price;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function useWebSocket(): WebSocketState {
@@ -13,67 +35,97 @@ export function useWebSocket(): WebSocketState {
     isConnected: false,
     circuitBreaker: false,
     latency: 0,
+    liveTickCounts: {},
   });
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backoffRef = useRef(1000);
 
+  const performHandshake = useCallback(async () => {
+    const results = await Promise.allSettled(
+      SYMBOLS.map((sym) => fetchInitialQuote(sym).then((price) => ({ sym, price })))
+    );
+    const updates: Record<string, number> = {};
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value.price !== null) {
+        updates[r.value.sym] = r.value.price;
+      }
+    }
+    if (Object.keys(updates).length > 0) {
+      setState((s) => ({
+        ...s,
+        prices: { ...s.prices, ...updates },
+      }));
+    }
+  }, []);
+
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = protocol + '//' + window.location.host + '/ws';
-    
+
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      setState(s => ({ ...s, isConnected: true }));
+      setState((s) => ({ ...s, isConnected: true }));
       backoffRef.current = 1000;
+      // REST price handshake — populate price immediately without waiting for first tick
+      void performHandshake();
     };
 
     ws.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'tick') {
-          setState(s => ({
+        const data = JSON.parse(event.data as string) as {
+          type: string;
+          symbol?: string;
+          price?: number;
+          latency?: number;
+          circuitBreaker?: boolean;
+        };
+
+        if (data.type === 'tick' && data.symbol && typeof data.price === 'number') {
+          setState((s) => ({
             ...s,
-            prices: { ...s.prices, [data.symbol]: data.price }
+            prices: { ...s.prices, [data.symbol!]: data.price! },
+            liveTickCounts: {
+              ...s.liveTickCounts,
+              [data.symbol!]: (s.liveTickCounts[data.symbol!] ?? 0) + 1,
+            },
           }));
         } else if (data.type === 'status') {
-          setState(s => ({
+          setState((s) => ({
             ...s,
-            latency: data.latency || 0,
-            circuitBreaker: !!data.circuitBreaker
+            latency: data.latency ?? 0,
+            circuitBreaker: !!data.circuitBreaker,
           }));
         } else if (data.type === 'circuit_breaker') {
-          setState(s => ({ ...s, circuitBreaker: true }));
+          setState((s) => ({ ...s, circuitBreaker: true }));
         }
-      } catch (err) {
-        // ignore
+      } catch {
+        // ignore malformed messages
       }
     };
 
     ws.onclose = () => {
-      setState(s => ({ ...s, isConnected: false }));
+      setState((s) => ({ ...s, isConnected: false }));
       const timeout = Math.min(backoffRef.current * 1.5, 30000);
       backoffRef.current = timeout;
-      
+
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
-      
       reconnectTimeoutRef.current = setTimeout(() => {
         connect();
       }, timeout);
     };
 
     ws.onerror = () => {
-      // close will be called which handles reconnect
       ws.close();
     };
-  }, []);
+  }, [performHandshake]);
 
   useEffect(() => {
     connect();

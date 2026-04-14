@@ -12,6 +12,7 @@ export interface SignalAnalysis {
   direction: string;
   confidence: number;
   safeMode: boolean;
+  warming?: boolean;
   reasons: string[];
   indicators: IndicatorValues;
   timestamp: string;

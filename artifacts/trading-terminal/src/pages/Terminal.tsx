@@ -90,7 +90,13 @@ export default function Terminal() {
           </div>
 
           <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground">
-            {signal?.safeMode && (
+            {signal?.warming && (
+              <div className="flex items-center gap-1 text-blue-400 animate-pulse bg-blue-500/10 px-2 py-1 rounded">
+                <Activity size={14} />
+                WARMING UP
+              </div>
+            )}
+            {signal?.safeMode && !signal?.warming && (
               <div className="flex items-center gap-1 text-amber-500 animate-pulse bg-amber-500/10 px-2 py-1 rounded">
                 <AlertTriangle size={14} />
                 SAFE MODE

@@ -18,6 +18,11 @@ const priceCache = new Map<string, number>();
 const candleCache = new Map<string, OHLC[]>();
 const subscribers = new Set<TickCallback>();
 
+/** Live tick counter per symbol — drives the warm-up guard */
+const liveTickCounts = new Map<string, number>();
+
+const WARMUP_TICKS = 5;
+
 let ws: WebSocket | null = null;
 let latency = 0;
 let latencyBreached = false;
@@ -35,6 +40,10 @@ export function getCandles(symbol: string): OHLC[] {
   return candleCache.get(symbol) ?? [];
 }
 
+export function setCandles(symbol: string, candles: OHLC[]): void {
+  candleCache.set(symbol, candles);
+}
+
 export function getLatency(): number {
   return latency;
 }
@@ -48,6 +57,16 @@ export function subscribeToTicks(cb: TickCallback): () => void {
   return () => subscribers.delete(cb);
 }
 
+/** Returns the number of real-time WebSocket ticks received for this symbol */
+export function getLiveTicks(symbol: string): number {
+  return liveTickCounts.get(symbol) ?? 0;
+}
+
+/** True once >= 5 live ticks have been received — signals can rely on real-time pressure */
+export function isWarmedUp(symbol: string): boolean {
+  return (liveTickCounts.get(symbol) ?? 0) >= WARMUP_TICKS;
+}
+
 function buildCandle(symbol: string, price: number, timestamp: number): void {
   const candles = candleCache.get(symbol) ?? [];
   const minuteTs = Math.floor(timestamp / 60000) * 60;
@@ -59,6 +78,7 @@ function buildCandle(symbol: string, price: number, timestamp: number): void {
       last.low = Math.min(last.low, price);
       last.close = price;
       last.volume += 1;
+      candleCache.set(symbol, candles);
       return;
     }
   }
@@ -145,6 +165,14 @@ function connectTwelveData(): void {
 
       priceCache.set(symbol, price);
       buildCandle(symbol, price, timestamp);
+
+      // Increment live tick counter for this symbol
+      const prev = liveTickCounts.get(symbol) ?? 0;
+      liveTickCounts.set(symbol, prev + 1);
+
+      if (prev + 1 === WARMUP_TICKS) {
+        logger.info({ symbol }, `Warm-up complete — ${WARMUP_TICKS} live ticks received`);
+      }
 
       const tick: PriceTick = { symbol, price, timestamp };
       for (const cb of subscribers) {

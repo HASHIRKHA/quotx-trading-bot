@@ -23,6 +23,7 @@ export interface SignalResult {
   direction: "UP" | "DOWN" | "NEUTRAL";
   confidence: number;
   safeMode: boolean;
+  warming: boolean;
   reasons: string[];
   indicators: IndicatorValues;
 }
@@ -89,7 +90,12 @@ function calcVolatility(closes: number[], period = 14): number {
   return Math.sqrt(variance) / mean;
 }
 
-export function analyzeSignal(candles: OHLC[]): SignalResult {
+/**
+ * Analyze market signal.
+ * @param candles  - OHLC candle array (must be sorted oldest → newest)
+ * @param warming  - true while fewer than 5 live WS ticks received; skips entropy/volatility Safe Mode
+ */
+export function analyzeSignal(candles: OHLC[], warming = false): SignalResult {
   const closes = candles.map((c) => c.close);
   const highs = candles.map((c) => c.high);
   const lows = candles.map((c) => c.low);
@@ -114,6 +120,17 @@ export function analyzeSignal(candles: OHLC[]): SignalResult {
     volatility,
   };
 
+  if (warming) {
+    return {
+      direction: "NEUTRAL",
+      confidence: 0,
+      safeMode: false,
+      warming: true,
+      reasons: ["Warming up — awaiting 5 live market ticks before signal activates"],
+      indicators,
+    };
+  }
+
   const ENTROPY_THRESHOLD = 0.97;
   const VOLATILITY_THRESHOLD = 0.04;
 
@@ -122,9 +139,14 @@ export function analyzeSignal(candles: OHLC[]): SignalResult {
       direction: "NEUTRAL",
       confidence: 0,
       safeMode: true,
+      warming: false,
       reasons: [
-        entropy > ENTROPY_THRESHOLD ? `Market entropy too high (${entropy.toFixed(3)}) — Safe Mode` : "",
-        volatility > VOLATILITY_THRESHOLD ? `Extreme volatility detected (${(volatility * 100).toFixed(2)}%) — Paused` : "",
+        entropy > ENTROPY_THRESHOLD
+          ? `Market entropy too high (${entropy.toFixed(3)}) — Safe Mode`
+          : "",
+        volatility > VOLATILITY_THRESHOLD
+          ? `Extreme volatility detected (${(volatility * 100).toFixed(2)}%) — Paused`
+          : "",
       ].filter(Boolean),
       indicators,
     };
@@ -157,19 +179,22 @@ export function analyzeSignal(candles: OHLC[]): SignalResult {
   const recentCloses = closes.slice(-10);
   const trend = recentCloses[recentCloses.length - 1] - recentCloses[0];
   if (trend > 0) {
-    signals.push({ direction: "UP", weight: 15, reason: `Bullish momentum (last 10 candles)` });
+    signals.push({ direction: "UP", weight: 15, reason: "Bullish momentum (last 10 candles)" });
   } else if (trend < 0) {
-    signals.push({ direction: "DOWN", weight: 15, reason: `Bearish momentum (last 10 candles)` });
+    signals.push({ direction: "DOWN", weight: 15, reason: "Bearish momentum (last 10 candles)" });
   }
 
   const highLow14 = candles.slice(-14);
   const highest = Math.max(...highLow14.map((c) => c.high));
   const lowest = Math.min(...highLow14.map((c) => c.low));
-  const stochastic = ((currentPrice - lowest) / (highest - lowest)) * 100;
-  if (stochastic < 20) {
-    signals.push({ direction: "UP", weight: 10, reason: `Stochastic oversold (${stochastic.toFixed(1)})` });
-  } else if (stochastic > 80) {
-    signals.push({ direction: "DOWN", weight: 10, reason: `Stochastic overbought (${stochastic.toFixed(1)})` });
+  const range = highest - lowest;
+  if (range > 0) {
+    const stochastic = ((currentPrice - lowest) / range) * 100;
+    if (stochastic < 20) {
+      signals.push({ direction: "UP", weight: 10, reason: `Stochastic oversold (${stochastic.toFixed(1)})` });
+    } else if (stochastic > 80) {
+      signals.push({ direction: "DOWN", weight: 10, reason: `Stochastic overbought (${stochastic.toFixed(1)})` });
+    }
   }
 
   if (signals.length === 0) {
@@ -177,6 +202,7 @@ export function analyzeSignal(candles: OHLC[]): SignalResult {
       direction: "NEUTRAL",
       confidence: 50,
       safeMode: false,
+      warming: false,
       reasons: ["No strong signal — market is consolidating"],
       indicators,
     };
@@ -195,5 +221,5 @@ export function analyzeSignal(candles: OHLC[]): SignalResult {
     .filter((s) => s.direction === direction)
     .map((s) => s.reason);
 
-  return { direction, confidence, safeMode: false, reasons, indicators };
+  return { direction, confidence, safeMode: false, warming: false, reasons, indicators };
 }

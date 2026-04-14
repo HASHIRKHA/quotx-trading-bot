@@ -61,6 +61,7 @@ export const GetMarketSignalResponse = zod.object({
   direction: zod.string(),
   confidence: zod.number(),
   safeMode: zod.boolean(),
+  warming: zod.boolean().optional(),
   reasons: zod.array(zod.string()),
   indicators: zod.object({
     rsi: zod.number(),
