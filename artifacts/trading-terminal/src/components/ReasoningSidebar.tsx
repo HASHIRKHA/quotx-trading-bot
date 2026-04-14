@@ -23,7 +23,12 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis &
   };
 
   if (!signal) {
-    return <div className="p-4 text-muted-foreground font-mono text-sm">Loading reasoning...</div>;
+    return (
+      <div className="p-4 text-center text-muted-foreground font-mono text-sm flex flex-col items-center gap-2">
+        <Loader2 size={20} className="animate-spin text-primary" />
+        <span>Initializing AI...</span>
+      </div>
+    );
   }
 
   const isUp = signal.direction === 'UP';
@@ -33,8 +38,10 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis &
   const isSafe = signal.safeMode;
   const hasSignal = isUp || isDown;
 
-  const color = signal.confidence > 70 ? '#22c55e' : signal.confidence > 50 ? '#f59e0b' : '#6b7280';
-  const colorClass = signal.confidence > 70 ? 'text-green-500' : signal.confidence > 50 ? 'text-amber-500' : 'text-gray-500';
+  // Defensive: confidence may be undefined during the initial handshake
+  const confidence = signal?.confidence ?? 0;
+  const color = confidence > 70 ? '#22c55e' : confidence > 50 ? '#f59e0b' : '#6b7280';
+  const colorClass = confidence > 70 ? 'text-green-500' : confidence > 50 ? 'text-amber-500' : 'text-gray-500';
 
   const factors: FactorResult[] = (signal as any).factors ?? [];
   const factorCount: number = (signal as any).factorCount ?? 0;
@@ -60,7 +67,7 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis &
             stroke={isWarming ? '#6b7280' : color}
             strokeWidth="10" strokeDasharray="283"
             initial={{ strokeDashoffset: 283 }}
-            animate={{ strokeDashoffset: isWarming ? 283 : 283 - (283 * signal.confidence) / 100 }}
+            animate={{ strokeDashoffset: isWarming ? 283 : 283 - (283 * confidence) / 100 }}
             transition={{ duration: 1, ease: 'easeOut' }}
           />
         </svg>
@@ -69,7 +76,7 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis &
             <Loader2 size={22} className="text-muted-foreground animate-spin" />
           ) : (
             <>
-              <span className={`text-2xl font-bold font-mono ${colorClass}`}>{signal.confidence.toFixed(0)}%</span>
+              <span className={`text-2xl font-bold font-mono ${colorClass}`}>{confidence.toFixed(0)}%</span>
               <span className="text-[10px] text-muted-foreground">CONFIDENCE</span>
             </>
           )}
@@ -123,7 +130,7 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis &
         <ExecutionCountdown
           executionTime={(signal as any).executionTime}
           direction={signal.direction}
-          confidence={signal.confidence}
+          confidence={confidence}
           active={hasSignal}
         />
       )}
