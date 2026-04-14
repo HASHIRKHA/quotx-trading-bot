@@ -116,7 +116,7 @@ function calcATR(candles: OHLC[], period = 14): number {
   return trs.slice(-period).reduce((a, b) => a + b, 0) / Math.min(period, trs.length);
 }
 
-function calcEntropy(closes: number[], period = 20): number {
+function calcEntropy(closes: number[], period = 30): number {
   if (closes.length < period) return 0.5;
   const slice = closes.slice(-period);
   const changes = slice.slice(1).map((c, i) => (c >= slice[i] ? 1 : 0));
@@ -348,9 +348,10 @@ function predictGhostCandle(
 
 // ─── Main Signal Analyzer ────────────────────────────────────────────────────
 
-const ENTROPY_THRESHOLD = 0.97;
+const ENTROPY_THRESHOLD = 0.99;   // raised — real markets with p≥0.6 directional bias now pass
 const VOLATILITY_THRESHOLD = 0.04;
 const REQUIRED_FACTORS = 4;
+const FACTOR_OVERRIDE_COUNT = 5;  // if 5+ factors agree, bypass entropy/volatility guard
 
 export function analyzeSignal(candles: OHLC[], warming = false): SignalResult {
   const closes = candles.map((c) => c.close);
@@ -404,24 +405,6 @@ export function analyzeSignal(candles: OHLC[], warming = false): SignalResult {
     factorMomentum(closes),
   ];
 
-  if (entropy > ENTROPY_THRESHOLD || volatility > VOLATILITY_THRESHOLD) {
-    const upF = factors.filter((f) => f.confirmed && f.direction === "UP");
-    const downF = factors.filter((f) => f.confirmed && f.direction === "DOWN");
-    const dominantF = upF.length >= downF.length ? upF : downF;
-    return {
-      direction: "NEUTRAL", confidence: 0, safeMode: true, warming: false,
-      reasons: [
-        entropy > ENTROPY_THRESHOLD ? `High entropy (${entropy.toFixed(3)}) — Safe Mode active` : "",
-        volatility > VOLATILITY_THRESHOLD ? `Volatility spike (${(volatility * 100).toFixed(2)}%) — predictions paused` : "",
-      ].filter(Boolean),
-      factors,
-      factorCount: dominantF.length,
-      indicators,
-      ghostCandle: null,
-      executionTime,
-    };
-  }
-
   // ── RBF kernel SVM classification
   const fingerprint = extractTemporalFingerprint(candles);
   const bullScore = rbfKernel(fingerprint, BULL_PROTOTYPE, 0.3);
@@ -429,11 +412,28 @@ export function analyzeSignal(candles: OHLC[], warming = false): SignalResult {
   const kernelDir = bullScore > bearScore ? "UP" : "DOWN";
   const kernelConf = Math.abs(bullScore - bearScore) / (bullScore + bearScore);
 
-  // ── Count directional factors
+  // ── Count directional factors (computed before entropy gate so override can reference them)
   const upFactors = factors.filter((f) => f.confirmed && f.direction === "UP");
   const downFactors = factors.filter((f) => f.confirmed && f.direction === "DOWN");
   const dominantDir = upFactors.length >= downFactors.length ? "UP" : "DOWN";
   const dominantFactors = dominantDir === "UP" ? upFactors : downFactors;
+
+  // ── Entropy / volatility guard — bypassed when factor confluence is overwhelming
+  const factorOverride = dominantFactors.length >= FACTOR_OVERRIDE_COUNT && kernelDir === dominantDir;
+  if (!factorOverride && (entropy > ENTROPY_THRESHOLD || volatility > VOLATILITY_THRESHOLD)) {
+    return {
+      direction: "NEUTRAL", confidence: 0, safeMode: true, warming: false,
+      reasons: [
+        entropy > ENTROPY_THRESHOLD ? `High entropy (${entropy.toFixed(3)}) — Safe Mode active` : "",
+        volatility > VOLATILITY_THRESHOLD ? `Volatility spike (${(volatility * 100).toFixed(2)}%) — predictions paused` : "",
+      ].filter(Boolean),
+      factors,
+      factorCount: dominantFactors.length,
+      indicators,
+      ghostCandle: null,
+      executionTime,
+    };
+  }
 
   if (dominantFactors.length < REQUIRED_FACTORS) {
     return {

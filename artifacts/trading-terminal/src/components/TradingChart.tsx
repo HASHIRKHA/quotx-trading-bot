@@ -105,6 +105,9 @@ export function TradingChart({
   // Load historical data
   useEffect(() => {
     if (!historicalData || !seriesRef.current) return;
+    // Defensive guard — API may return an error object or null during loading
+    if (!Array.isArray(historicalData) || historicalData.length === 0) return;
+
     const formatted: CandlestickData<Time>[] = historicalData
       .map((c) => ({
         time: c.time as Time,
@@ -175,6 +178,9 @@ export function TradingChart({
     } catch {}
   }, [ghostCandle, ghostConfidence]);
 
+  // Determine whether we have valid chart data yet
+  const hasData = Array.isArray(historicalData) && historicalData.length > 0;
+
   return (
     <div
       className={`w-full h-full relative rounded-lg overflow-hidden border border-border/50 transition-shadow duration-300 ${
@@ -182,6 +188,14 @@ export function TradingChart({
       }`}
     >
       <div ref={chartContainerRef} className="w-full h-full" />
+
+      {/* Loading overlay — shown until first valid candle array arrives */}
+      {!hasData && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0a0a0f]/80 z-10">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mb-3" />
+          <p className="text-xs font-mono text-muted-foreground tracking-widest uppercase">Loading Market Data</p>
+        </div>
+      )}
 
       {/* Ghost candle legend */}
       {ghostCandle && (

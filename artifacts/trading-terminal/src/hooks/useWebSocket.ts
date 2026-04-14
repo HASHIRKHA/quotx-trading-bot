@@ -15,18 +15,26 @@ function getApiBase(): string {
   return base.endsWith('/') ? base.slice(0, -1) : base;
 }
 
-async function fetchInitialQuote(symbol: string): Promise<number | null> {
-  try {
-    const encoded = encodeURIComponent(symbol);
-    const url = `${getApiBase()}/api/market/quote/${encoded}`;
-    const resp = await fetch(url);
-    if (!resp.ok) return null;
-    const data = (await resp.json()) as { price?: number | null };
-    if (typeof data.price === 'number' && data.price > 0) return data.price;
-    return null;
-  } catch {
-    return null;
+async function fetchInitialQuote(symbol: string, maxRetries = 3): Promise<number | null> {
+  const encoded = encodeURIComponent(symbol);
+  const url = `${getApiBase()}/api/market/quote/${encoded}`;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const data = (await resp.json()) as { price?: number | null };
+        if (typeof data.price === 'number' && data.price > 0) return data.price;
+      }
+    } catch {
+      // network error — retry
+    }
+    // Wait 1 s before next attempt (skip wait after last attempt)
+    if (attempt < maxRetries - 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 1000));
+    }
   }
+  return null;
 }
 
 export function useWebSocket(): WebSocketState {

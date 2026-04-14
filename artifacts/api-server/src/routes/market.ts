@@ -52,6 +52,7 @@ router.get("/market/quote/*splat", async (req, res): Promise<void> => {
 /**
  * GET /api/market/historical/:symbol*
  * Returns OHLC candle array.  Priority: in-memory cache → DB → AV → TD REST → synthetic.
+ * Always responds with a valid JSON array — never propagates errors to the frontend.
  */
 router.get("/market/historical/*splat", async (req, res): Promise<void> => {
   const symbol = extractSymbol(req);
@@ -63,16 +64,22 @@ router.get("/market/historical/*splat", async (req, res): Promise<void> => {
   const qp = GetHistoricalDataQueryParams.safeParse(req.query);
   const interval = qp.success ? (qp.data.interval ?? "1min") : "1min";
 
-  let candles = getCandles(symbol);
+  try {
+    let candles = getCandles(symbol);
 
-  if (candles.length < 10) {
-    const result = await fetchAndCacheCandles(symbol, interval);
-    candles = result.candles;
-    // Update in-memory cache so signal endpoint benefits too
-    setCandles(symbol, candles);
+    if (candles.length < 10) {
+      const result = await fetchAndCacheCandles(symbol, interval);
+      candles = result.candles;
+      // Update in-memory cache so signal endpoint benefits too
+      setCandles(symbol, candles);
+    }
+
+    res.json(candles);
+  } catch (err) {
+    // Log internally — never surface error objects to the chart component
+    req.log?.error({ err, symbol }, "Historical data fetch failed — returning empty array");
+    res.json([]);
   }
-
-  res.json(candles);
 });
 
 /**
