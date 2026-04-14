@@ -7,6 +7,23 @@
  */
 import type { IndicatorValues } from "./indicatorValues";
 
+export interface FactorResult {
+  name: string;
+  value: number;
+  confirmed: boolean;
+  direction: string;
+  weight: number;
+  detail: string;
+}
+
+export interface GhostCandle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
 export interface SignalAnalysis {
   symbol: string;
   direction: string;
@@ -14,6 +31,10 @@ export interface SignalAnalysis {
   safeMode: boolean;
   warming?: boolean;
   reasons: string[];
+  factors?: FactorResult[];
+  factorCount?: number;
+  ghostCandle?: GhostCandle | null;
+  executionTime?: number;
   indicators: IndicatorValues;
   timestamp: string;
 }

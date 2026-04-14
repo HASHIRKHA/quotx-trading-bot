@@ -63,6 +63,23 @@ export const GetMarketSignalResponse = zod.object({
   safeMode: zod.boolean(),
   warming: zod.boolean().optional(),
   reasons: zod.array(zod.string()),
+  factors: zod.array(zod.object({
+    name: zod.string(),
+    value: zod.number(),
+    confirmed: zod.boolean(),
+    direction: zod.string(),
+    weight: zod.number(),
+    detail: zod.string(),
+  })).optional(),
+  factorCount: zod.number().optional(),
+  ghostCandle: zod.object({
+    time: zod.number(),
+    open: zod.number(),
+    high: zod.number(),
+    low: zod.number(),
+    close: zod.number(),
+  }).nullable().optional(),
+  executionTime: zod.number().optional(),
   indicators: zod.object({
     rsi: zod.number(),
     macd: zod.number(),
@@ -73,6 +90,9 @@ export const GetMarketSignalResponse = zod.object({
     bbLower: zod.number(),
     entropy: zod.number(),
     volatility: zod.number(),
+    atr: zod.number().optional(),
+    stochastic: zod.number().optional(),
+    volumeRatio: zod.number().optional(),
   }),
   timestamp: zod.string(),
 });

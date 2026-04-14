@@ -1,6 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, ISeriesApi, CandlestickData, Time } from 'lightweight-charts';
+import React, { useEffect, useRef } from 'react';
+import {
+  createChart, ColorType, ISeriesApi, CandlestickData, Time,
+  CandlestickSeries, LineSeries, LineStyle,
+} from 'lightweight-charts';
 import { useGetHistoricalData, getGetHistoricalDataQueryKey } from '@workspace/api-client-react';
+
+interface GhostCandle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
 
 interface TradingChartProps {
   symbol: string;
@@ -8,22 +19,27 @@ interface TradingChartProps {
   interval: string;
   isDanger?: boolean;
   isBull?: boolean;
+  ghostCandle?: GhostCandle | null;
+  ghostConfidence?: number;
 }
 
-export function TradingChart({ symbol, currentPrice, interval, isDanger, isBull }: TradingChartProps) {
+export function TradingChart({
+  symbol, currentPrice, interval, isDanger, isBull, ghostCandle, ghostConfidence,
+}: TradingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
-  const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const ghostSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const lastCandleRef = useRef<CandlestickData<Time> | null>(null);
 
   const { data: historicalData } = useGetHistoricalData(symbol, { interval }, {
     query: {
       queryKey: getGetHistoricalDataQueryKey(symbol, { interval }),
       staleTime: 60000,
-    }
+    },
   });
 
-  const lastCandleRef = useRef<CandlestickData<Time> | null>(null);
-
+  // Create chart once
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -34,17 +50,13 @@ export function TradingChart({ symbol, currentPrice, interval, isDanger, isBull 
         fontFamily: 'JetBrains Mono',
       },
       grid: {
-        vertLines: { color: 'rgba(255, 255, 255, 0.05)' },
-        horzLines: { color: 'rgba(255, 255, 255, 0.05)' },
+        vertLines: { color: 'rgba(255,255,255,0.05)' },
+        horzLines: { color: 'rgba(255,255,255,0.05)' },
       },
-      crosshair: {
-        mode: 1, // Magnet
-      },
-      rightPriceScale: {
-        borderColor: 'rgba(255, 255, 255, 0.1)',
-      },
+      crosshair: { mode: 1 },
+      rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
       timeScale: {
-        borderColor: 'rgba(255, 255, 255, 0.1)',
+        borderColor: 'rgba(255,255,255,0.1)',
         timeVisible: true,
         secondsVisible: true,
       },
@@ -58,8 +70,20 @@ export function TradingChart({ symbol, currentPrice, interval, isDanger, isBull 
       wickDownColor: '#ef4444',
     });
 
+    // Ghost candle series — purple, semi-transparent
+    const ghostSeries = chart.addSeries(CandlestickSeries, {
+      upColor: 'rgba(168,85,247,0.45)',
+      downColor: 'rgba(168,85,247,0.45)',
+      borderUpColor: 'rgba(168,85,247,0.9)',
+      borderDownColor: 'rgba(168,85,247,0.9)',
+      wickUpColor: 'rgba(168,85,247,0.7)',
+      wickDownColor: 'rgba(168,85,247,0.7)',
+      borderVisible: true,
+    });
+
     chartRef.current = chart;
-    seriesRef.current = series as any;
+    seriesRef.current = series as unknown as ISeriesApi<'Candlestick'>;
+    ghostSeriesRef.current = ghostSeries as unknown as ISeriesApi<'Candlestick'>;
 
     const handleResize = () => {
       if (chartContainerRef.current) {
@@ -69,7 +93,6 @@ export function TradingChart({ symbol, currentPrice, interval, isDanger, isBull 
         });
       }
     };
-
     window.addEventListener('resize', handleResize);
     handleResize();
 
@@ -79,69 +102,95 @@ export function TradingChart({ symbol, currentPrice, interval, isDanger, isBull 
     };
   }, []);
 
+  // Load historical data
   useEffect(() => {
-    if (historicalData && seriesRef.current) {
-      const formattedData: CandlestickData<Time>[] = historicalData.map(c => ({
+    if (!historicalData || !seriesRef.current) return;
+    const formatted: CandlestickData<Time>[] = historicalData
+      .map((c) => ({
         time: c.time as Time,
         open: c.open,
         high: c.high,
         low: c.low,
         close: c.close,
-      }));
-      
-      // Sort by time to satisfy lightweight-charts
-      formattedData.sort((a, b) => (a.time as number) - (b.time as number));
-      
-      try {
-        seriesRef.current.setData(formattedData);
-        if (formattedData.length > 0) {
-           lastCandleRef.current = formattedData[formattedData.length - 1];
-        }
-      } catch (e) {}
-    }
+      }))
+      .sort((a, b) => (a.time as number) - (b.time as number));
+
+    try {
+      seriesRef.current.setData(formatted);
+      if (formatted.length > 0) lastCandleRef.current = formatted[formatted.length - 1];
+    } catch {}
   }, [historicalData]);
 
+  // Live price update — extend current candle
   useEffect(() => {
-    if (currentPrice && seriesRef.current && lastCandleRef.current) {
-      const now = Math.floor(Date.now() / 1000);
-      const currentCandle = lastCandleRef.current;
-      
-      // For simplicity, we either update the current candle or create a new one every 60s
-      // A more robust implementation would respect the actual interval.
-      const intervalSecs = interval === '1m' ? 60 : interval === '5m' ? 300 : 900;
-      
-      let newCandle: CandlestickData<Time>;
-      
-      if (now - (currentCandle.time as number) >= intervalSecs) {
-        newCandle = {
-          time: now as Time,
-          open: currentPrice,
-          high: currentPrice,
-          low: currentPrice,
-          close: currentPrice,
-        };
-      } else {
-        newCandle = {
-          ...currentCandle,
-          high: Math.max(currentCandle.high, currentPrice),
-          low: Math.min(currentCandle.low, currentPrice),
-          close: currentPrice,
-        };
-      }
-      
-      try {
-        seriesRef.current.update(newCandle);
-        lastCandleRef.current = newCandle;
-      } catch (e) {}
+    if (!currentPrice || !seriesRef.current || !lastCandleRef.current) return;
+    const now = Math.floor(Date.now() / 1000);
+    const intervalSecs = interval === '1m' ? 60 : interval === '5m' ? 300 : 900;
+    const currentCandle = lastCandleRef.current;
+    let newCandle: CandlestickData<Time>;
+
+    if (now - (currentCandle.time as number) >= intervalSecs) {
+      newCandle = { time: now as Time, open: currentPrice, high: currentPrice, low: currentPrice, close: currentPrice };
+    } else {
+      newCandle = {
+        ...currentCandle,
+        high: Math.max(currentCandle.high, currentPrice),
+        low: Math.min(currentCandle.low, currentPrice),
+        close: currentPrice,
+      };
     }
+    try {
+      seriesRef.current.update(newCandle);
+      lastCandleRef.current = newCandle;
+    } catch {}
   }, [currentPrice, interval]);
 
+  // Ghost candle — update whenever signal changes
+  useEffect(() => {
+    if (!ghostSeriesRef.current) return;
+
+    if (!ghostCandle) {
+      try { ghostSeriesRef.current.setData([]); } catch {}
+      return;
+    }
+
+    // Scale ghost opacity via confidence
+    const alpha = ghostConfidence ? Math.max(0.25, ghostConfidence / 100) : 0.4;
+    try {
+      ghostSeriesRef.current.applyOptions({
+        upColor: `rgba(168,85,247,${alpha * 0.5})`,
+        downColor: `rgba(168,85,247,${alpha * 0.5})`,
+        borderUpColor: `rgba(168,85,247,${alpha})`,
+        borderDownColor: `rgba(168,85,247,${alpha})`,
+        wickUpColor: `rgba(168,85,247,${alpha * 0.8})`,
+        wickDownColor: `rgba(168,85,247,${alpha * 0.8})`,
+      });
+      ghostSeriesRef.current.setData([{
+        time: ghostCandle.time as Time,
+        open: ghostCandle.open,
+        high: ghostCandle.high,
+        low: ghostCandle.low,
+        close: ghostCandle.close,
+      }]);
+    } catch {}
+  }, [ghostCandle, ghostConfidence]);
+
   return (
-    <div className={`w-full h-full relative rounded-lg overflow-hidden border border-border/50 transition-shadow duration-300 ${isDanger ? 'chart-bearish-glow' : isBull ? 'chart-bullish-glow' : ''}`}>
+    <div
+      className={`w-full h-full relative rounded-lg overflow-hidden border border-border/50 transition-shadow duration-300 ${
+        isDanger ? 'chart-bearish-glow' : isBull ? 'chart-bullish-glow' : ''
+      }`}
+    >
       <div ref={chartContainerRef} className="w-full h-full" />
+
+      {/* Ghost candle legend */}
+      {ghostCandle && (
+        <div className="absolute bottom-8 left-3 flex items-center gap-1.5 text-[10px] font-mono text-purple-400 bg-black/60 px-2 py-1 rounded border border-purple-500/30">
+          <div className="w-2 h-2 rounded-sm bg-purple-500 opacity-70" />
+          PREDICTED +60s
+          {ghostConfidence && <span className="ml-1 text-purple-300">({ghostConfidence.toFixed(0)}%)</span>}
+        </div>
+      )}
     </div>
   );
 }
-
-// Ensure CandlestickSeries is correctly imported for the addSeries function
-import { CandlestickSeries } from 'lightweight-charts';

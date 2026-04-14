@@ -2,7 +2,8 @@ import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
 import app from "./app.js";
 import { logger } from "./lib/logger.js";
-import { initTwelveData, subscribeToTicks, getPrice, isCircuitBreakerOpen, getLatency } from "./lib/twelvedata.js";
+import { initTwelveData, subscribeToTicks, getPrice, isCircuitBreakerOpen, getLatency, setCandles } from "./lib/twelvedata.js";
+import { fetchAndCacheCandles } from "./lib/datastore.js";
 
 const rawPort = process.env["PORT"];
 
@@ -94,4 +95,17 @@ wss.on("connection", (client, req) => {
 server.listen(port, () => {
   logger.info({ port }, "Server listening (HTTP + WebSocket)");
   initTwelveData();
+
+  // Replace synthetic seed with real historical data in the background
+  const SYMBOLS = ["EUR/USD", "BTC/USD"];
+  for (const sym of SYMBOLS) {
+    fetchAndCacheCandles(sym, "1min")
+      .then(({ candles, source }) => {
+        if (source !== "synthetic" && candles.length >= 20) {
+          setCandles(sym, candles);
+          logger.info({ symbol: sym, source, count: candles.length }, "In-memory cache upgraded to real market data");
+        }
+      })
+      .catch((err) => logger.error({ err, symbol: sym }, "Pre-fetch of real candle data failed"));
+  }
 });

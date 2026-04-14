@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { TradingChart } from '@/components/TradingChart';
 import { IndicatorsPanel } from '@/components/IndicatorsPanel';
@@ -14,9 +14,8 @@ export default function Terminal() {
   const [symbol, setSymbol] = useState('EUR/USD');
   const [interval, setInterval] = useState('1m');
   const { prices, isConnected, circuitBreaker, latency } = useWebSocket();
-  
+
   const { data: symbols } = useGetMarketSymbols();
-  
   const currentPrice = prices[symbol];
 
   const [prevPrice, setPrevPrice] = useState<number | undefined>(undefined);
@@ -35,30 +34,32 @@ export default function Terminal() {
   const { data: signal } = useGetMarketSignal(symbol, {
     query: {
       queryKey: getGetMarketSignalQueryKey(symbol),
-      refetchInterval: 30000
-    }
+      refetchInterval: 15000,
+    },
   });
 
-  const isDanger = signal?.indicators?.rsi && signal.indicators.rsi > 70;
-  const isBull = signal?.indicators?.rsi && signal.indicators.rsi < 30;
+  const isDanger = !!(signal?.indicators?.rsi && signal.indicators.rsi > 70);
+  const isBull = !!(signal?.indicators?.rsi && signal.indicators.rsi < 30);
+
+  const ghostCandle = signal?.ghostCandle ?? null;
 
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-background text-foreground font-sans overflow-hidden">
       {/* HEADER */}
       <header className="h-14 border-b border-border/50 flex items-center justify-between px-4 shrink-0 bg-card">
         <div className="flex items-center gap-6">
-          <h1 className="text-xl font-bold text-primary" style={{ textShadow: '0 0 10px rgba(0, 200, 255, 0.5)' }}>
+          <h1 className="text-xl font-bold text-primary" style={{ textShadow: '0 0 10px rgba(0,200,255,0.5)' }}>
             QUANTUM TERMINAL
           </h1>
-          
+
           <Select value={symbol} onValueChange={setSymbol}>
             <SelectTrigger className="w-[140px] h-8 bg-black/20 border-border font-mono">
               <SelectValue placeholder="Select Symbol" />
             </SelectTrigger>
             <SelectContent>
-              {symbols?.map(s => (
+              {symbols?.map((s) => (
                 <SelectItem key={s.symbol} value={s.symbol}>{s.symbol}</SelectItem>
-              )) || (
+              )) ?? (
                 <>
                   <SelectItem value="EUR/USD">EUR/USD</SelectItem>
                   <SelectItem value="BTC/USD">BTC/USD</SelectItem>
@@ -68,7 +69,7 @@ export default function Terminal() {
           </Select>
 
           <div className="flex gap-1">
-            {['1m', '5m', '15m'].map(int => (
+            {['1m', '5m', '15m'].map((int) => (
               <Button
                 key={int}
                 variant={interval === int ? 'secondary' : 'ghost'}
@@ -83,8 +84,16 @@ export default function Terminal() {
         </div>
 
         <div className="flex items-center gap-6">
-          <div className={`text-2xl font-mono font-bold flex items-center gap-2 ${priceDirection === 'up' ? 'text-green-500' : priceDirection === 'down' ? 'text-red-500' : ''}`} style={{ animation: priceDirection ? 'priceBounce 0.3s ease' : 'none' }}>
-            {currentPrice ? currentPrice.toFixed(5) : '---'}
+          <div
+            className={`text-2xl font-mono font-bold flex items-center gap-2 transition-colors duration-300 ${
+              priceDirection === 'up' ? 'text-green-500' : priceDirection === 'down' ? 'text-red-500' : ''
+            }`}
+          >
+            {currentPrice
+              ? symbol.includes('BTC')
+                ? currentPrice.toFixed(2)
+                : currentPrice.toFixed(5)
+              : '---'}
             {priceDirection === 'up' && <span className="text-sm">▲</span>}
             {priceDirection === 'down' && <span className="text-sm">▼</span>}
           </div>
@@ -108,11 +117,11 @@ export default function Terminal() {
             </div>
             <div className="flex items-center gap-1">
               {circuitBreaker ? (
-                <span className="text-yellow-500 flex items-center gap-1"><AlertTriangle size={14}/> CB TRIPPED</span>
+                <span className="text-yellow-500 flex items-center gap-1"><AlertTriangle size={14} /> CB TRIPPED</span>
               ) : isConnected ? (
-                <span className="text-green-500 flex items-center gap-1"><Wifi size={14}/> ONLINE</span>
+                <span className="text-green-500 flex items-center gap-1"><Wifi size={14} /> ONLINE</span>
               ) : (
-                <span className="text-red-500 flex items-center gap-1"><WifiOff size={14}/> OFFLINE</span>
+                <span className="text-red-500 flex items-center gap-1"><WifiOff size={14} /> OFFLINE</span>
               )}
             </div>
           </div>
@@ -121,18 +130,20 @@ export default function Terminal() {
 
       {/* MAIN CONTENT */}
       <div className="flex flex-1 overflow-hidden">
-        {/* LEFT COLUMN: Chart + Indicators + Stats */}
+        {/* LEFT COLUMN */}
         <div className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 p-4 pb-2 relative">
-            <TradingChart 
-              symbol={symbol} 
-              currentPrice={currentPrice} 
+            <TradingChart
+              symbol={symbol}
+              currentPrice={currentPrice}
               interval={interval}
               isDanger={isDanger}
               isBull={isBull}
+              ghostCandle={ghostCandle}
+              ghostConfidence={signal?.confidence}
             />
           </div>
-          
+
           <div className="h-48 shrink-0 p-4 pt-2 flex flex-col gap-2">
             <IndicatorsPanel signal={signal} />
           </div>
@@ -142,9 +153,9 @@ export default function Terminal() {
           </div>
         </div>
 
-        {/* RIGHT COLUMN: AI Reasoner + Trade Panel */}
+        {/* RIGHT COLUMN */}
         <div className="w-[320px] shrink-0 border-l border-border/50 bg-card flex flex-col overflow-y-auto">
-          <ReasoningSidebar signal={signal} symbol={symbol} />
+          <ReasoningSidebar signal={signal as any} symbol={symbol} />
           <TradePanel symbol={symbol} currentPrice={currentPrice} signal={signal} />
         </div>
       </div>
