@@ -1,0 +1,27 @@
+Act as a Senior Frontend Architect. We must resolve the activeTrades?.filter runtime error in TradePanel.tsx by implementing defensive coding patterns and 'Zero-Trust' UI guards.
+1. Fix the Active Trades Crash (TradePanel.tsx):
+Locate line 124 in artifacts/trading-terminal/src/components/TradePanel.tsx.
+Action: Wrap the activeTrades logic in an Array.isArray() check and provide a safe fallback.
+Change the line to: {Array.isArray(activeTrades) ? activeTrades.filter(t => t.outcome === null).map(trade => { ... }) : null}.
+Additionally, use the nullish coalescing operator to ensure the variable is treated as an empty array if missing: const trades = activeTrades ?? [];.
+2. Implement a High-Level Component Guard:
+At the very top of the TradePanel render function, add a safety check: if (activeTrades === undefined) return <div className="p-4 text-center animate-pulse text-xs text-muted-foreground">Syncing active trades...</div>;.
+This prevents the component from attempting to render any trade logic until the state is successfully initialized
+.
+3. Prevent Future 'Brittle' AI Errors:
+Review all .map(), .filter(), and .toFixed() calls in TradePanel.tsx and App.tsx.
+Mandate: Every data-driven property must use optional chaining (?.) and nullish coalescing (??) with appropriate default values (e.g., ?? 0 for numbers, ?? [] for arrays, ?? '---' for strings).
+4. Backend Payload Hardening:
+Update the backend trade controller. Ensure that the activeTrades field in the WebSocket/API response always returns a JSON array [], even if there are no active trades or a database error occurs.
+5. Verification:
+Confirm that the terminal opens in a new tab without crashing and displays the 'Syncing' message for a few milliseconds before showing the active trade list."
+
+--------------------------------------------------------------------------------
+Why this prompt is necessary for AI-generated code
+The sources highlight that while AI models like Claude 3.7 are exceptional at generating logic, they often prioritize functionality over the "edge-case" resilience required for financial platforms
+.
+Exploitation Risk: Deploying "brittle" code that crashes on null inputs leads to a 92% probability of exploitation or system failure in production environments
+.
+Infrastructure Gaps: AI agents frequently make assumptions about data availability. In a high-frequency terminal with sub-100ms latency, the UI often tries to render before the PostgreSQL database has finished sending the trade array
+.
+The "Zero-Trust" Solution: By forcing the agent to use Array.isArray() and ?? [], you create a "safety net" that allows the UI to stay open and functional even during network hiccups or server restarts

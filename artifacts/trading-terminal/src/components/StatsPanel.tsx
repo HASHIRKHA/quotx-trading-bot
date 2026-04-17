@@ -12,6 +12,10 @@ export function StatsPanel({ symbol }: { symbol: string }) {
     { query: { queryKey: getGetTradeHistoryQueryKey({ symbol, limit: 5 }), refetchInterval: 5000 } }
   );
 
+  // Always derive a safe array before filtering — the query may resolve to a non-array value
+  const safeHistory = Array.isArray(history) ? history : [];
+  const resolvedTrades = safeHistory.filter(t => t.outcome !== null);
+
   if (!stats) {
     return (
       <div className="p-4 text-muted-foreground font-mono text-sm animate-pulse">
@@ -68,7 +72,7 @@ export function StatsPanel({ symbol }: { symbol: string }) {
               </tr>
             </thead>
             <tbody>
-              {history?.filter(t => t.outcome !== null).map(trade => (
+              {resolvedTrades.map(trade => (
                 <tr key={trade.id} className="border-t border-border/20">
                   <td className="py-2 opacity-70">{new Date(trade.createdAt).toLocaleTimeString()}</td>
                   <td className={`py-2 ${trade.direction === 'UP' ? 'text-green-500' : 'text-red-500'}`}>{trade.direction}</td>
@@ -81,7 +85,7 @@ export function StatsPanel({ symbol }: { symbol: string }) {
                   </td>
                 </tr>
               ))}
-              {history?.filter(t => t.outcome !== null).length === 0 && (
+              {resolvedTrades.length === 0 && (
                 <tr>
                   <td colSpan={5} className="py-4 text-center text-muted-foreground italic">No resolved trades yet</td>
                 </tr>

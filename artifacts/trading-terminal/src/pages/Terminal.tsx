@@ -57,14 +57,17 @@ export default function Terminal() {
               <SelectValue placeholder="Select Symbol" />
             </SelectTrigger>
             <SelectContent>
-              {symbols?.map((s) => (
-                <SelectItem key={s.symbol} value={s.symbol}>{s.symbol}</SelectItem>
-              )) ?? (
-                <>
-                  <SelectItem value="EUR/USD">EUR/USD</SelectItem>
-                  <SelectItem value="BTC/USD">BTC/USD</SelectItem>
-                </>
-              )}
+              {Array.isArray(symbols) && symbols.length > 0
+                ? symbols.map((s) => (
+                    <SelectItem key={s.symbol} value={s.symbol}>{s.symbol}</SelectItem>
+                  ))
+                : (
+                  <>
+                    <SelectItem value="EUR/USD">EUR/USD</SelectItem>
+                    <SelectItem value="BTC/USD">BTC/USD</SelectItem>
+                  </>
+                )
+              }
             </SelectContent>
           </Select>
 

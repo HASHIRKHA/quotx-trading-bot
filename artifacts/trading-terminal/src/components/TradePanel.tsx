@@ -18,6 +18,10 @@ export function TradePanel({ symbol, currentPrice, signal }: { symbol: string, c
     { query: { queryKey: getGetTradeHistoryQueryKey({ symbol, limit: 10 }), refetchInterval: 1000 } }
   );
 
+  // Derive a guaranteed array — even if the query hasn't resolved or the API returned non-array
+  const trades = Array.isArray(activeTrades) ? activeTrades : [];
+  const pendingTrades = trades.filter(t => t.outcome === null);
+
   const handleExecute = () => {
     if (!currentPrice) {
       toast({ title: "Price unavailable", variant: "destructive" });
@@ -42,34 +46,39 @@ export function TradePanel({ symbol, currentPrice, signal }: { symbol: string, c
     });
   };
 
-  // Auto-resolve check
+  // Auto-resolve check — uses the guaranteed `trades` array, no optional chaining needed
   useEffect(() => {
-    if (!activeTrades || !currentPrice) return;
-    
-    activeTrades.forEach(trade => {
+    if (!currentPrice || trades.length === 0) return;
+
+    trades.forEach(trade => {
       if (trade.outcome === null) {
-        const createdTime = new Date(trade.createdAt).getTime();
-        const now = Date.now();
-        const elapsed = (now - createdTime) / 1000;
-        
+        const elapsed = (Date.now() - new Date(trade.createdAt).getTime()) / 1000;
+
         if (elapsed >= trade.expirySeconds) {
-          const isWin = trade.direction === 'UP' ? currentPrice > trade.entryPrice : currentPrice < trade.entryPrice;
-          resolveTrade.mutate({
-            id: trade.id,
-            data: {
-              exitPrice: currentPrice,
-              outcome: isWin ? 'WIN' : 'LOSS'
+          const entryNum = Number(trade.entryPrice ?? 0);
+          const isWin = trade.direction === 'UP' ? currentPrice > entryNum : currentPrice < entryNum;
+          resolveTrade.mutate(
+            { id: trade.id, data: { exitPrice: currentPrice, outcome: isWin ? 'WIN' : 'LOSS' } },
+            {
+              onSuccess: () => {
+                queryClient.invalidateQueries({ queryKey: getGetTradeHistoryQueryKey({ symbol, limit: 10 }) });
+                queryClient.invalidateQueries({ queryKey: getGetTradeStatsQueryKey({ symbol }) });
+              },
             }
-          }, {
-            onSuccess: () => {
-              queryClient.invalidateQueries({ queryKey: getGetTradeHistoryQueryKey({ symbol, limit: 10 }) });
-              queryClient.invalidateQueries({ queryKey: getGetTradeStatsQueryKey({ symbol }) });
-            }
-          });
+          );
         }
       }
     });
-  }, [activeTrades, currentPrice, resolveTrade, queryClient, symbol]);
+  }, [trades, currentPrice, resolveTrade, queryClient, symbol]);
+
+  // Guard — activeTrades undefined means first query hasn't settled yet
+  if (activeTrades === undefined) {
+    return (
+      <div className="p-4 text-center animate-pulse text-xs text-muted-foreground">
+        Syncing active trades...
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col p-4 gap-4 mt-auto border-t border-border/50 bg-black/20">
@@ -121,24 +130,25 @@ export function TradePanel({ symbol, currentPrice, signal }: { symbol: string, c
       {/* ACTIVE TRADES LIST */}
       <div className="flex flex-col gap-2 mt-2">
         <h3 className="text-xs font-mono text-muted-foreground">ACTIVE TRADES</h3>
-        {activeTrades?.filter(t => t.outcome === null).map(trade => {
-           const elapsed = (Date.now() - new Date(trade.createdAt).getTime()) / 1000;
-           const remaining = Math.max(0, Math.ceil(trade.expirySeconds - elapsed));
-           const currentProfit = currentPrice 
-             ? (trade.direction === 'UP' ? currentPrice > trade.entryPrice : currentPrice < trade.entryPrice)
-             : false;
+        {pendingTrades.map(trade => {
+          const elapsed = (Date.now() - new Date(trade.createdAt).getTime()) / 1000;
+          const remaining = Math.max(0, Math.ceil((trade.expirySeconds ?? 60) - elapsed));
+          const entryNum = Number(trade.entryPrice ?? 0);
+          const currentProfit = currentPrice
+            ? (trade.direction === 'UP' ? currentPrice > entryNum : currentPrice < entryNum)
+            : false;
 
-           return (
-             <div key={trade.id} className={`flex items-center justify-between p-2 rounded text-xs font-mono border ${currentProfit ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'}`}>
-               <div className="flex items-center gap-2">
-                 {trade.direction === 'UP' ? <ArrowUp size={12} className="text-green-500"/> : <ArrowDown size={12} className="text-red-500"/>}
-                 <span>{trade.entryPrice.toFixed(5)}</span>
-               </div>
-               <div className="font-bold">{remaining}s</div>
-             </div>
-           );
+          return (
+            <div key={trade.id} className={`flex items-center justify-between p-2 rounded text-xs font-mono border ${currentProfit ? 'border-green-500/30 bg-green-500/10' : 'border-red-500/30 bg-red-500/10'}`}>
+              <div className="flex items-center gap-2">
+                {trade.direction === 'UP' ? <ArrowUp size={12} className="text-green-500"/> : <ArrowDown size={12} className="text-red-500"/>}
+                <span>{entryNum.toFixed(5)}</span>
+              </div>
+              <div className="font-bold">{remaining}s</div>
+            </div>
+          );
         })}
-        {activeTrades?.filter(t => t.outcome === null).length === 0 && (
+        {pendingTrades.length === 0 && (
           <div className="text-xs font-mono text-muted-foreground text-center py-2 italic">No active trades</div>
         )}
       </div>
