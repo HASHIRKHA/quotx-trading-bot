@@ -117,6 +117,43 @@ router.get("/trades/stats", async (req, res): Promise<void> => {
   }
 });
 
+router.get("/trades/performance", async (req, res): Promise<void> => {
+  const ZERO = { winRate: 0, last10Rate: 0, wins: 0, total: 0, bySymbol: [], last20: [] };
+  try {
+    const rows = await db.select().from(tradesTable).orderBy(tradesTable.createdAt);
+    const resolved = rows.filter((r) => r.outcome);
+    const wins = resolved.filter((r) => r.outcome === "WIN").length;
+    const total = resolved.length;
+    const winRate = total > 0 ? (wins / total) * 100 : 0;
+
+    const last10 = resolved.slice(-10);
+    const last10Wins = last10.filter((r) => r.outcome === "WIN").length;
+    const last10Rate = last10.length > 0 ? (last10Wins / last10.length) * 100 : 0;
+
+    const symbolMap: Record<string, { wins: number; total: number }> = {};
+    for (const r of resolved) {
+      if (!symbolMap[r.symbol]) symbolMap[r.symbol] = { wins: 0, total: 0 };
+      symbolMap[r.symbol].total++;
+      if (r.outcome === "WIN") symbolMap[r.symbol].wins++;
+    }
+    const bySymbol = Object.entries(symbolMap).map(([symbol, { wins: w, total: t }]) => ({
+      symbol, wins: w, total: t, winRate: t > 0 ? (w / t) * 100 : 0,
+    }));
+
+    const last20 = resolved.slice(-20).map((r) => ({
+      outcome: r.outcome as string,
+      symbol: r.symbol,
+      confidence: parseFloat(r.confidence),
+      direction: r.direction,
+    }));
+
+    res.json({ winRate, last10Rate, wins, total, bySymbol, last20 });
+  } catch (err) {
+    req.log?.error({ err }, "GET /trades/performance failed");
+    res.json(ZERO);
+  }
+});
+
 router.patch("/trades/:id/resolve", async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const idNum = parseInt(raw, 10);

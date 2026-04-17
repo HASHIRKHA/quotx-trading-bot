@@ -8,7 +8,7 @@ interface WebSocketState {
   liveTickCounts: Record<string, number>;
 }
 
-const SYMBOLS = ['EUR/USD', 'BTC/USD'];
+const SYMBOLS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'BTC/USD', 'ETH/USD'];
 
 function getApiBase(): string {
   const base = import.meta.env.BASE_URL ?? '/';

@@ -1,7 +1,7 @@
 /**
- * Quantum Signal Engine v2
+ * Quantum Signal Engine v3
  * SVM-inspired RBF classifier + LSTM-style temporal fingerprinting
- * Requires minimum 6 confirmed factors before issuing UP/DOWN signal.
+ * Dynamic entropy scaling · News sentiment suppression · 6-factor scoring
  */
 
 export interface OHLC {
@@ -50,6 +50,9 @@ export interface SignalResult {
   confidence: number;
   safeMode: boolean;
   warming: boolean;
+  entropyReduced: boolean;       // entropy in 0.97–0.99 soft-block zone
+  sentimentBias?: string;        // AV news sentiment label for this symbol
+  sentimentSuppressed: boolean;  // true if sentiment overrode a technical direction
   reasons: string[];
   factors: FactorResult[];
   factorCount: number;
@@ -58,7 +61,7 @@ export interface SignalResult {
   executionTime: number;
 }
 
-// ─── Math Utilities ─────────────────────────────────────────────────────────
+// ─── Math Utilities ───────────────────────────────────────────────────────────
 
 function ema(closes: number[], period: number): number[] {
   if (closes.length < period) return closes.map(() => closes[0] ?? 0);
@@ -153,38 +156,21 @@ function extractTemporalFingerprint(candles: OHLC[]): number[] {
   const closes = slice.map((c) => c.close);
   const volumes = slice.map((c) => c.volume);
 
-  // Exponential decay weights: most recent candle = highest weight
-  const weights = closes.map((_, i) => Math.exp((i - n + 1) * 0.1));
-  const totalW = weights.reduce((a, b) => a + b, 0);
-  const normalize = (arr: number[]) => arr.map((v, i) => v * weights[i]).reduce((a, b) => a + b, 0) / totalW;
-
-  // 1. Weighted return at 1-candle scale
   const ret1 = n >= 2 ? (closes[n - 1] - closes[n - 2]) / closes[n - 2] : 0;
-  // 2. Weighted return at 5-candle scale
   const ret5 = n >= 6 ? (closes[n - 1] - closes[n - 6]) / closes[n - 6] : 0;
-  // 3. Weighted return at 10-candle scale
   const ret10 = n >= 11 ? (closes[n - 1] - closes[n - 11]) / closes[n - 11] : 0;
-  // 4. Weighted return at 20-candle scale
   const ret20 = n >= 21 ? (closes[n - 1] - closes[n - 21]) / closes[n - 21] : 0;
 
-  // 5. Directional consistency (% of candles going up) over last 5 candles
   const ups5 = slice.slice(-5).filter((_, i, a) => i > 0 && a[i].close > a[i - 1].close).length / 4;
-  // 6. Directional consistency over last 10 candles
   const ups10 = slice.slice(-10).filter((_, i, a) => i > 0 && a[i].close > a[i - 1].close).length / 9;
 
-  // 7. Volume ratio: recent 3 vs overall mean
   const avgVol = volumes.reduce((a, b) => a + b, 0) / n;
   const recentVol = volumes.slice(-3).reduce((a, b) => a + b, 0) / 3;
   const volRatio = avgVol > 0 ? recentVol / avgVol - 1 : 0;
 
-  // 8. RSI normalized [-1, 1]
   const rsiNorm = (calcRSI(closes) - 50) / 50;
-
-  // 9. MACD sign
   const { macd, signal } = calcMACD(closes);
   const macdNorm = Math.tanh((macd - signal) * 10000);
-
-  // 10. Bollinger position [-0.5, 0.5] (0 = middle, ±0.5 = at band)
   const { upper, lower } = calcBollinger(closes);
   const bbPos = upper > lower ? (closes[n - 1] - lower) / (upper - lower) - 0.5 : 0;
 
@@ -193,7 +179,7 @@ function extractTemporalFingerprint(candles: OHLC[]): number[] {
     Math.tanh(ret5 * 100),
     Math.tanh(ret10 * 100),
     Math.tanh(ret20 * 100),
-    ups5 * 2 - 1,   // [-1, 1]
+    ups5 * 2 - 1,
     ups10 * 2 - 1,
     Math.tanh(volRatio),
     rsiNorm,
@@ -202,11 +188,10 @@ function extractTemporalFingerprint(candles: OHLC[]): number[] {
   ];
 }
 
-// Prototypical strong-bullish and strong-bearish reference vectors
 const BULL_PROTOTYPE = [0.6, 0.5, 0.4, 0.3, 0.7, 0.6, 0.5, -0.6, 0.8, -0.7];
 const BEAR_PROTOTYPE = [-0.6, -0.5, -0.4, -0.3, -0.7, -0.6, 0.5, 0.6, -0.8, 0.7];
 
-// ─── The Six Factors ─────────────────────────────────────────────────────────
+// ─── The Six Factors ──────────────────────────────────────────────────────────
 
 function factorRSIExtreme(closes: number[]): FactorResult {
   const rsi = calcRSI(closes);
@@ -296,7 +281,6 @@ function factorSupportResistance(candles: OHLC[]): FactorResult {
 function factorMomentum(closes: number[]): FactorResult {
   const n = closes.length;
   if (n < 10) return { name: "Momentum", value: 0, confirmed: false, direction: "NEUTRAL", weight: 17, detail: "Insufficient data" };
-  // Multi-timeframe alignment
   const m5 = closes[n - 1] - closes[n - 6];
   const m10 = closes[n - 1] - closes[n - 11];
   const m20 = n >= 21 ? closes[n - 1] - closes[n - 21] : m10;
@@ -346,14 +330,25 @@ function predictGhostCandle(
   }
 }
 
-// ─── Main Signal Analyzer ────────────────────────────────────────────────────
+// ─── Entropy Zones ───────────────────────────────────────────────────────────
 
-const ENTROPY_THRESHOLD = 0.99;   // raised — real markets with p≥0.6 directional bias now pass
+/**
+ * ENTROPY_HARD_BLOCK: full safe mode — no signal regardless of factors
+ * ENTROPY_SOFT_BLOCK: signal allowed but confidence reduced 30% + ghost dimmed
+ */
+const ENTROPY_HARD_BLOCK = 0.99;
+const ENTROPY_SOFT_BLOCK = 0.97;
 const VOLATILITY_THRESHOLD = 0.04;
 const REQUIRED_FACTORS = 4;
-const FACTOR_OVERRIDE_COUNT = 5;  // if 5+ factors agree, bypass entropy/volatility guard
+const FACTOR_OVERRIDE_COUNT = 5;
 
-export function analyzeSignal(candles: OHLC[], warming = false): SignalResult {
+// ─── Main Signal Analyzer ─────────────────────────────────────────────────────
+
+export function analyzeSignal(
+  candles: OHLC[],
+  warming = false,
+  sentimentBias?: string,
+): SignalResult {
   const closes = candles.map((c) => c.close);
   const now = Math.floor(Date.now() / 1000);
   const nextMinute = Math.floor(now / 60) * 60 + 60;
@@ -385,6 +380,9 @@ export function analyzeSignal(candles: OHLC[], warming = false): SignalResult {
     indicators,
     ghostCandle: null,
     executionTime,
+    entropyReduced: false,
+    sentimentBias,
+    sentimentSuppressed: false,
   };
 
   if (warming) {
@@ -412,19 +410,22 @@ export function analyzeSignal(candles: OHLC[], warming = false): SignalResult {
   const kernelDir = bullScore > bearScore ? "UP" : "DOWN";
   const kernelConf = Math.abs(bullScore - bearScore) / (bullScore + bearScore);
 
-  // ── Count directional factors (computed before entropy gate so override can reference them)
+  // ── Count directional factors
   const upFactors = factors.filter((f) => f.confirmed && f.direction === "UP");
   const downFactors = factors.filter((f) => f.confirmed && f.direction === "DOWN");
   const dominantDir = upFactors.length >= downFactors.length ? "UP" : "DOWN";
   const dominantFactors = dominantDir === "UP" ? upFactors : downFactors;
 
-  // ── Entropy / volatility guard — bypassed when factor confluence is overwhelming
+  // ── Factor override: 5+ confirmed factors with kernel agreement bypasses entropy gate
   const factorOverride = dominantFactors.length >= FACTOR_OVERRIDE_COUNT && kernelDir === dominantDir;
-  if (!factorOverride && (entropy > ENTROPY_THRESHOLD || volatility > VOLATILITY_THRESHOLD)) {
+
+  // ── ENTROPY GATE: Hard block (≥0.99) and volatility gate
+  if (!factorOverride && (entropy >= ENTROPY_HARD_BLOCK || volatility > VOLATILITY_THRESHOLD)) {
     return {
       direction: "NEUTRAL", confidence: 0, safeMode: true, warming: false,
+      entropyReduced: false,
       reasons: [
-        entropy > ENTROPY_THRESHOLD ? `High entropy (${entropy.toFixed(3)}) — Safe Mode active` : "",
+        entropy >= ENTROPY_HARD_BLOCK ? `High entropy (${entropy.toFixed(3)}) — Safe Mode active` : "",
         volatility > VOLATILITY_THRESHOLD ? `Volatility spike (${(volatility * 100).toFixed(2)}%) — predictions paused` : "",
       ].filter(Boolean),
       factors,
@@ -432,12 +433,18 @@ export function analyzeSignal(candles: OHLC[], warming = false): SignalResult {
       indicators,
       ghostCandle: null,
       executionTime,
+      sentimentBias,
+      sentimentSuppressed: false,
     };
   }
+
+  // ── ENTROPY SOFT-BLOCK (0.97–0.99): allow signal but flag as reduced strength
+  const entropyReduced = !factorOverride && entropy >= ENTROPY_SOFT_BLOCK && entropy < ENTROPY_HARD_BLOCK;
 
   if (dominantFactors.length < REQUIRED_FACTORS) {
     return {
       direction: "NEUTRAL", confidence: 50, safeMode: false, warming: false,
+      entropyReduced,
       reasons: [
         `Only ${dominantFactors.length}/${REQUIRED_FACTORS} required factors confirmed`,
         "Waiting for stronger confluence before issuing signal",
@@ -447,6 +454,8 @@ export function analyzeSignal(candles: OHLC[], warming = false): SignalResult {
       indicators,
       ghostCandle: null,
       executionTime,
+      sentimentBias,
+      sentimentSuppressed: false,
     };
   }
 
@@ -456,24 +465,79 @@ export function analyzeSignal(candles: OHLC[], warming = false): SignalResult {
   const totalWeight = factors.reduce((a, f) => a + f.weight, 0);
   const factorRatio = factorWeight / totalWeight;
 
-  // ── Weighted confidence: 60% factor-based + 30% kernel + 10% entropy headroom
-  const entropyHeadroom = 1 - entropy / ENTROPY_THRESHOLD;
-  const rawConf =
+  // ── Weighted confidence: 60% factor + 30% kernel + 10% entropy headroom
+  const entropyHeadroom = Math.max(0, 1 - entropy / ENTROPY_HARD_BLOCK);
+  let rawConf =
     factorRatio * 60 +
     (kernelAgrees ? kernelConf : kernelConf * 0.3) * 30 +
     entropyHeadroom * 10;
-  const confidence = Math.min(96, Math.max(55, rawConf));
+
+  // ── Entropy soft-block: reduce confidence by 30%
+  if (entropyReduced) rawConf *= 0.7;
 
   const reasons = dominantFactors.map((f) => f.detail);
   if (kernelAgrees) reasons.push(`RBF pattern kernel confirms ${dominantDir} (${(kernelConf * 100).toFixed(0)}%)`);
+  if (entropyReduced) reasons.push(`Entropy soft-block (${entropy.toFixed(3)}) — reduced neural strength`);
 
-  const ghostCandle = predictGhostCandle(candles, dominantDir, confidence);
+  // ── SENTIMENT SUPPRESSION — news 'mood' overrides technical direction
+  let finalDir = dominantDir;
+  let sentimentSuppressed = false;
+  let sentimentReason = "";
+
+  if (sentimentBias === "Bearish" && dominantDir === "UP") {
+    finalDir = "NEUTRAL";
+    sentimentSuppressed = true;
+    sentimentReason = "🔴 Bearish news sentiment suppresses UP signal — conflicting macro mood";
+  } else if (sentimentBias === "Bullish" && dominantDir === "DOWN") {
+    finalDir = "NEUTRAL";
+    sentimentSuppressed = true;
+    sentimentReason = "🟢 Bullish news sentiment suppresses DOWN signal — conflicting macro mood";
+  } else if (sentimentBias === "Somewhat-Bearish" && dominantDir === "UP") {
+    rawConf *= 0.82;
+    sentimentReason = "⚠ Somewhat-Bearish news — UP confidence reduced 18%";
+    reasons.push(sentimentReason);
+  } else if (sentimentBias === "Somewhat-Bullish" && dominantDir === "DOWN") {
+    rawConf *= 0.82;
+    sentimentReason = "⚠ Somewhat-Bullish news — DOWN confidence reduced 18%";
+    reasons.push(sentimentReason);
+  } else if (sentimentBias && sentimentBias !== "Neutral") {
+    const aligned = (sentimentBias === "Bullish" && dominantDir === "UP") || (sentimentBias === "Somewhat-Bullish" && dominantDir === "UP")
+      || (sentimentBias === "Bearish" && dominantDir === "DOWN") || (sentimentBias === "Somewhat-Bearish" && dominantDir === "DOWN");
+    if (aligned) {
+      rawConf = Math.min(rawConf * 1.08, 96);
+      reasons.push(`News sentiment aligns with ${dominantDir} — confidence boosted`);
+    }
+  }
+
+  if (sentimentSuppressed) {
+    return {
+      direction: "NEUTRAL",
+      confidence: 30,
+      safeMode: false,
+      warming: false,
+      entropyReduced,
+      sentimentBias,
+      sentimentSuppressed: true,
+      reasons: [sentimentReason, ...reasons],
+      factors,
+      factorCount: dominantFactors.length,
+      indicators,
+      ghostCandle: null,
+      executionTime,
+    };
+  }
+
+  const confidence = Math.min(96, Math.max(55, rawConf));
+  const ghostCandle = finalDir !== "NEUTRAL" ? predictGhostCandle(candles, finalDir as "UP" | "DOWN", confidence) : null;
 
   return {
-    direction: dominantDir,
+    direction: finalDir as "UP" | "DOWN" | "NEUTRAL",
     confidence: parseFloat(confidence.toFixed(1)),
     safeMode: false,
     warming: false,
+    entropyReduced,
+    sentimentBias,
+    sentimentSuppressed: false,
     reasons,
     factors,
     factorCount: dominantFactors.length,

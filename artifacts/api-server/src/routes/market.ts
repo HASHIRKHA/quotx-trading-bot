@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
-import { getCandles, getPrice, setCandles, isWarmedUp } from "../lib/twelvedata.js";
+import { getCandles, getPrice, setCandles, isWarmedUp, SYMBOLS } from "../lib/twelvedata.js";
 import { analyzeSignal } from "../lib/signals.js";
+import { getSentiment } from "../lib/sentiment.js";
 import { fetchAndCacheCandles } from "../lib/datastore.js";
 import { fetchTwelveDataQuote } from "../lib/twelvedata-rest.js";
 import { GetHistoricalDataQueryParams } from "@workspace/api-zod";
@@ -13,18 +14,44 @@ function extractSymbol(req: { params: Record<string, string | string[]> }): stri
   return decodeURIComponent(raw);
 }
 
+const SYMBOL_META: Record<string, { name: string; type: string }> = {
+  "EUR/USD": { name: "Euro / US Dollar",       type: "forex" },
+  "GBP/USD": { name: "British Pound / US Dollar", type: "forex" },
+  "USD/JPY": { name: "US Dollar / Japanese Yen", type: "forex" },
+  "BTC/USD": { name: "Bitcoin / US Dollar",     type: "crypto" },
+  "ETH/USD": { name: "Ethereum / US Dollar",    type: "crypto" },
+};
+
 router.get("/market/symbols", async (_req, res): Promise<void> => {
-  res.json([
-    { symbol: "EUR/USD", name: "Euro / US Dollar", type: "forex" },
-    { symbol: "BTC/USD", name: "Bitcoin / US Dollar", type: "crypto" },
-  ]);
+  const list = SYMBOLS.map((s) => ({
+    symbol: s,
+    name: SYMBOL_META[s]?.name ?? s,
+    type: SYMBOL_META[s]?.type ?? "forex",
+  }));
+  res.json(list);
+});
+
+/**
+ * GET /api/market/sentiment/:symbol*
+ * Returns NLP sentiment from Alpha Vantage News API for a given symbol.
+ */
+router.get("/market/sentiment/*splat", async (req, res): Promise<void> => {
+  const symbol = extractSymbol(req);
+  if (!symbol) {
+    res.status(400).json({ error: "Missing symbol" });
+    return;
+  }
+  try {
+    const sentiment = await getSentiment(symbol);
+    res.json(sentiment);
+  } catch {
+    res.json({ label: "Neutral", score: 0, articleCount: 0, summary: "Fetch error", cached: false, updatedAt: Date.now() });
+  }
 });
 
 /**
  * GET /api/market/quote/:symbol*
  * Returns the latest known price for a symbol.
- * Performs a REST "last quote" lookup against Twelve Data if the in-memory
- * cache is empty (e.g. market closed / server just started).
  */
 router.get("/market/quote/*splat", async (req, res): Promise<void> => {
   const symbol = extractSymbol(req);
@@ -51,8 +78,7 @@ router.get("/market/quote/*splat", async (req, res): Promise<void> => {
 
 /**
  * GET /api/market/historical/:symbol*
- * Returns OHLC candle array.  Priority: in-memory cache → DB → AV → TD REST → synthetic.
- * Always responds with a valid JSON array — never propagates errors to the frontend.
+ * Returns OHLC candle array.  Priority: in-memory → DB → AV → TD REST → synthetic.
  */
 router.get("/market/historical/*splat", async (req, res): Promise<void> => {
   const symbol = extractSymbol(req);
@@ -70,13 +96,11 @@ router.get("/market/historical/*splat", async (req, res): Promise<void> => {
     if (candles.length < 10) {
       const result = await fetchAndCacheCandles(symbol, interval);
       candles = result.candles;
-      // Update in-memory cache so signal endpoint benefits too
       setCandles(symbol, candles);
     }
 
     res.json(candles);
   } catch (err) {
-    // Log internally — never surface error objects to the chart component
     req.log?.error({ err, symbol }, "Historical data fetch failed — returning empty array");
     res.json([]);
   }
@@ -84,8 +108,7 @@ router.get("/market/historical/*splat", async (req, res): Promise<void> => {
 
 /**
  * GET /api/market/signal/:symbol*
- * Returns the AI signal analysis.  Passes the warm-up flag to the signal engine
- * so entropy/volatility guards are skipped until 5 real-time ticks have been received.
+ * Returns the AI signal analysis including sentiment-weighted decision.
  */
 router.get("/market/signal/*splat", async (req, res): Promise<void> => {
   const symbol = extractSymbol(req);
@@ -107,8 +130,17 @@ router.get("/market/signal/*splat", async (req, res): Promise<void> => {
     return;
   }
 
+  // Fetch sentiment (cached — does not block if AV rate-limited)
+  let sentimentBias: string | undefined;
+  try {
+    const sentiment = await getSentiment(symbol);
+    sentimentBias = sentiment.label;
+  } catch {
+    sentimentBias = undefined;
+  }
+
   const warming = !isWarmedUp(symbol);
-  const signal = analyzeSignal(candles, warming);
+  const signal = analyzeSignal(candles, warming, sentimentBias);
   const currentPrice = getPrice(symbol) || candles[candles.length - 1].close;
 
   res.json({
@@ -117,6 +149,9 @@ router.get("/market/signal/*splat", async (req, res): Promise<void> => {
     confidence: signal.confidence,
     safeMode: signal.safeMode,
     warming: signal.warming,
+    entropyReduced: signal.entropyReduced,
+    sentimentBias: signal.sentimentBias,
+    sentimentSuppressed: signal.sentimentSuppressed,
     reasons: signal.reasons,
     factors: signal.factors,
     factorCount: signal.factorCount,

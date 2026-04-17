@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import {
   createChart, ColorType, ISeriesApi, CandlestickData, Time,
-  CandlestickSeries, LineSeries, LineStyle,
+  CandlestickSeries, LineStyle,
 } from 'lightweight-charts';
 import { useGetHistoricalData, getGetHistoricalDataQueryKey } from '@workspace/api-client-react';
 
@@ -13,6 +13,12 @@ interface GhostCandle {
   close: number;
 }
 
+interface GhostParams {
+  direction: 'UP' | 'DOWN';
+  scale: number;
+  time: number;
+}
+
 interface TradingChartProps {
   symbol: string;
   currentPrice?: number;
@@ -21,16 +27,22 @@ interface TradingChartProps {
   isBull?: boolean;
   ghostCandle?: GhostCandle | null;
   ghostConfidence?: number;
+  ghostDimmed?: boolean;   // true when entropy is in soft-block zone (0.97–0.99)
 }
 
 export function TradingChart({
-  symbol, currentPrice, interval, isDanger, isBull, ghostCandle, ghostConfidence,
+  symbol, currentPrice, interval, isDanger, isBull, ghostCandle, ghostConfidence, ghostDimmed,
 }: TradingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const ghostSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const lastCandleRef = useRef<CandlestickData<Time> | null>(null);
+
+  // Ghost candle fluid update state — stored in refs so the 500ms interval always reads fresh values
+  const ghostParamsRef = useRef<GhostParams | null>(null);
+  const ghostDimmedRef = useRef<boolean>(false);
+  const ghostConfRef = useRef<number>(0.5);
 
   const { data: historicalData } = useGetHistoricalData(symbol, { interval }, {
     query: {
@@ -105,7 +117,6 @@ export function TradingChart({
   // Load historical data
   useEffect(() => {
     if (!historicalData || !seriesRef.current) return;
-    // Defensive guard — API may return an error object or null during loading
     if (!Array.isArray(historicalData) || historicalData.length === 0) return;
 
     const formatted: CandlestickData<Time>[] = historicalData
@@ -148,37 +159,84 @@ export function TradingChart({
     } catch {}
   }, [currentPrice, interval]);
 
-  // Ghost candle — update whenever signal changes
+  // When the signal ghost candle changes: extract direction & scale into the ref
+  // No direct chart update here — the 500ms interval handles all chart writes
   useEffect(() => {
-    if (!ghostSeriesRef.current) return;
-
     if (!ghostCandle) {
-      try { ghostSeriesRef.current.setData([]); } catch {}
+      ghostParamsRef.current = null;
       return;
     }
+    const isUp = ghostCandle.close >= ghostCandle.open;
+    // scale = range / 0.5 (since close = open ± scale*0.5 from predictGhostCandle)
+    const scale = Math.abs(ghostCandle.close - ghostCandle.open) / 0.5 || Math.abs(ghostCandle.high - ghostCandle.low) / 0.9;
+    ghostParamsRef.current = {
+      direction: isUp ? 'UP' : 'DOWN',
+      scale,
+      time: ghostCandle.time,
+    };
+  }, [ghostCandle]);
 
-    // Scale ghost opacity via confidence
-    const alpha = ghostConfidence ? Math.max(0.25, ghostConfidence / 100) : 0.4;
-    try {
-      ghostSeriesRef.current.applyOptions({
-        upColor: `rgba(168,85,247,${alpha * 0.5})`,
-        downColor: `rgba(168,85,247,${alpha * 0.5})`,
-        borderUpColor: `rgba(168,85,247,${alpha})`,
-        borderDownColor: `rgba(168,85,247,${alpha})`,
-        wickUpColor: `rgba(168,85,247,${alpha * 0.8})`,
-        wickDownColor: `rgba(168,85,247,${alpha * 0.8})`,
-      });
-      ghostSeriesRef.current.setData([{
-        time: ghostCandle.time as Time,
-        open: ghostCandle.open,
-        high: ghostCandle.high,
-        low: ghostCandle.low,
-        close: ghostCandle.close,
-      }]);
-    } catch {}
-  }, [ghostCandle, ghostConfidence]);
+  // Keep dimmed and confidence refs in sync with props
+  useEffect(() => {
+    ghostDimmedRef.current = !!ghostDimmed;
+  }, [ghostDimmed]);
 
-  // Determine whether we have valid chart data yet
+  useEffect(() => {
+    ghostConfRef.current = ghostConfidence ? ghostConfidence / 100 : 0.5;
+  }, [ghostConfidence]);
+
+  // 500ms fluid ghost candle loop — anchors ghost open to latest live price
+  useEffect(() => {
+    const tick = () => {
+      if (!ghostSeriesRef.current) return;
+
+      const params = ghostParamsRef.current;
+      if (!params || !lastCandleRef.current) {
+        try { ghostSeriesRef.current.setData([]); } catch {}
+        return;
+      }
+
+      const livePrice = lastCandleRef.current.close;
+      const conf = ghostConfRef.current;
+      const dimmed = ghostDimmedRef.current;
+      const alpha = Math.max(0.2, conf) * (dimmed ? 0.35 : 1.0);
+
+      let gc: CandlestickData<Time>;
+      if (params.direction === 'UP') {
+        gc = {
+          time: params.time as Time,
+          open: livePrice,
+          high: livePrice + params.scale * 0.75,
+          low: livePrice - params.scale * 0.15,
+          close: livePrice + params.scale * 0.5,
+        };
+      } else {
+        gc = {
+          time: params.time as Time,
+          open: livePrice,
+          high: livePrice + params.scale * 0.15,
+          low: livePrice - params.scale * 0.75,
+          close: livePrice - params.scale * 0.5,
+        };
+      }
+
+      try {
+        ghostSeriesRef.current.applyOptions({
+          upColor: `rgba(168,85,247,${(alpha * 0.5).toFixed(2)})`,
+          downColor: `rgba(168,85,247,${(alpha * 0.5).toFixed(2)})`,
+          borderUpColor: `rgba(168,85,247,${alpha.toFixed(2)})`,
+          borderDownColor: `rgba(168,85,247,${alpha.toFixed(2)})`,
+          wickUpColor: `rgba(168,85,247,${(alpha * 0.8).toFixed(2)})`,
+          wickDownColor: `rgba(168,85,247,${(alpha * 0.8).toFixed(2)})`,
+        });
+        ghostSeriesRef.current.setData([gc]);
+      } catch {}
+    };
+
+    const id = setInterval(tick, 500);
+    return () => clearInterval(id);
+  }, []); // intentionally empty — reads everything from refs
+
   const hasData = Array.isArray(historicalData) && historicalData.length > 0;
 
   return (
@@ -189,7 +247,7 @@ export function TradingChart({
     >
       <div ref={chartContainerRef} className="w-full h-full" />
 
-      {/* Loading overlay — shown until first valid candle array arrives */}
+      {/* Loading overlay */}
       {!hasData && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0a0a0f]/80 z-10">
           <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mb-3" />
@@ -199,10 +257,15 @@ export function TradingChart({
 
       {/* Ghost candle legend */}
       {ghostCandle && (
-        <div className="absolute bottom-8 left-3 flex items-center gap-1.5 text-[10px] font-mono text-purple-400 bg-black/60 px-2 py-1 rounded border border-purple-500/30">
-          <div className="w-2 h-2 rounded-sm bg-purple-500 opacity-70" />
+        <div className={`absolute bottom-8 left-3 flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded border ${
+          ghostDimmed
+            ? 'text-purple-400/50 bg-black/40 border-purple-500/15'
+            : 'text-purple-400 bg-black/60 border-purple-500/30'
+        }`}>
+          <div className={`w-2 h-2 rounded-sm ${ghostDimmed ? 'bg-purple-500/30' : 'bg-purple-500 opacity-70'}`} />
           PREDICTED +60s
           {ghostConfidence && <span className="ml-1 text-purple-300">({ghostConfidence.toFixed(0)}%)</span>}
+          {ghostDimmed && <span className="ml-1 text-amber-400/70 text-[9px]">REDUCED</span>}
         </div>
       )}
     </div>

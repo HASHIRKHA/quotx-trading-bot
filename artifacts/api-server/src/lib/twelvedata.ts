@@ -11,7 +11,7 @@ export interface PriceTick {
 
 type TickCallback = (tick: PriceTick) => void;
 
-const SYMBOLS = ["EUR/USD", "BTC/USD"];
+export const SYMBOLS = ["EUR/USD", "GBP/USD", "USD/JPY", "BTC/USD", "ETH/USD"];
 const TWELVE_DATA_WS = "wss://ws.twelvedata.com/v1/quotes/price";
 
 const priceCache = new Map<string, number>();
@@ -107,13 +107,13 @@ function connectTwelveData(): void {
     return;
   }
 
-  logger.info("Connecting to Twelve Data WebSocket...");
+  logger.info({ symbols: SYMBOLS }, "Connecting to Twelve Data WebSocket (multi-stream)...");
   ws = new WebSocket(`${TWELVE_DATA_WS}?apikey=${apiKey}`);
 
   let pingInterval: NodeJS.Timeout | null = null;
 
   ws.on("open", () => {
-    logger.info("Twelve Data WS connected");
+    logger.info("Twelve Data WS connected — subscribing to all 5 symbol streams");
     latencyBreached = false;
 
     const subscribeMsg = {

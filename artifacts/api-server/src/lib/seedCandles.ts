@@ -2,25 +2,35 @@ import type { OHLC } from "./signals.js";
 
 const BASE_PRICES: Record<string, number> = {
   "EUR/USD": 1.1685,
+  "GBP/USD": 1.2720,
+  "USD/JPY": 149.85,
   "BTC/USD": 104500,
+  "ETH/USD": 3420,
 };
 
 const TREND_STRENGTH: Record<string, number> = {
   "EUR/USD": 0.00015,
+  "GBP/USD": 0.00018,
+  "USD/JPY": 0.018,
   "BTC/USD": 80,
+  "ETH/USD": 3.5,
 };
 
 const VOLATILITY: Record<string, number> = {
   "EUR/USD": 0.00012,
+  "GBP/USD": 0.00015,
+  "USD/JPY": 0.014,
   "BTC/USD": 55,
+  "ETH/USD": 2.8,
 };
 
 export function generateSeedCandles(symbol: string, count = 200): OHLC[] {
   const basePrice = BASE_PRICES[symbol] ?? 1.0;
   const trendStrength = TREND_STRENGTH[symbol] ?? 0.0001;
   const vol = VOLATILITY[symbol] ?? 0.0001;
-  const isBtc = symbol.includes("BTC");
-  const decimals = isBtc ? 2 : 5;
+  const isCrypto = symbol.includes("BTC") || symbol.includes("ETH");
+  const isJpy = symbol.includes("JPY");
+  const decimals = isCrypto ? 2 : isJpy ? 3 : 5;
   const now = Math.floor(Date.now() / 1000);
   const minuteNow = Math.floor(now / 60) * 60;
 

@@ -5,17 +5,34 @@ import { IndicatorsPanel } from '@/components/IndicatorsPanel';
 import { ReasoningSidebar } from '@/components/ReasoningSidebar';
 import { TradePanel } from '@/components/TradePanel';
 import { StatsPanel } from '@/components/StatsPanel';
+import { PerformanceDashboard } from '@/components/PerformanceDashboard';
 import { useGetMarketSymbols, useGetMarketSignal, getGetMarketSignalQueryKey } from '@workspace/api-client-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { Activity, Wifi, WifiOff, AlertTriangle } from 'lucide-react';
+import { Activity, Wifi, WifiOff, AlertTriangle, Newspaper, BarChart2 } from 'lucide-react';
+
+const FALLBACK_SYMBOLS = [
+  { symbol: 'EUR/USD', name: 'Euro / US Dollar',           type: 'forex' },
+  { symbol: 'GBP/USD', name: 'British Pound / US Dollar',  type: 'forex' },
+  { symbol: 'USD/JPY', name: 'US Dollar / Japanese Yen',   type: 'forex' },
+  { symbol: 'BTC/USD', name: 'Bitcoin / US Dollar',        type: 'crypto' },
+  { symbol: 'ETH/USD', name: 'Ethereum / US Dollar',       type: 'crypto' },
+];
+
+function formatPrice(symbol: string, price: number): string {
+  if (symbol.includes('JPY')) return price.toFixed(3);
+  if (symbol.includes('BTC') || symbol.includes('ETH')) return price.toFixed(2);
+  return price.toFixed(5);
+}
 
 export default function Terminal() {
   const [symbol, setSymbol] = useState('EUR/USD');
   const [interval, setInterval] = useState('1m');
+  const [bottomTab, setBottomTab] = useState<'STATS' | 'NEURAL'>('STATS');
   const { prices, isConnected, circuitBreaker, latency } = useWebSocket();
 
-  const { data: symbols } = useGetMarketSymbols();
+  const { data: symbolsData } = useGetMarketSymbols();
+  const symbols = Array.isArray(symbolsData) && symbolsData.length > 0 ? symbolsData : FALLBACK_SYMBOLS;
   const currentPrice = prices[symbol];
 
   const [prevPrice, setPrevPrice] = useState<number | undefined>(undefined);
@@ -40,8 +57,10 @@ export default function Terminal() {
 
   const isDanger = !!(signal?.indicators?.rsi && signal.indicators.rsi > 70);
   const isBull = !!(signal?.indicators?.rsi && signal.indicators.rsi < 30);
-
-  const ghostCandle = signal?.ghostCandle ?? null;
+  const ghostCandle = (signal as any)?.ghostCandle ?? null;
+  const entropyReduced = (signal as any)?.entropyReduced === true;
+  const sentimentBias: string | undefined = (signal as any)?.sentimentBias;
+  const sentimentSuppressed: boolean = (signal as any)?.sentimentSuppressed === true;
 
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-background text-foreground font-sans overflow-hidden">
@@ -57,17 +76,9 @@ export default function Terminal() {
               <SelectValue placeholder="Select Symbol" />
             </SelectTrigger>
             <SelectContent>
-              {Array.isArray(symbols) && symbols.length > 0
-                ? symbols.map((s) => (
-                    <SelectItem key={s.symbol} value={s.symbol}>{s.symbol}</SelectItem>
-                  ))
-                : (
-                  <>
-                    <SelectItem value="EUR/USD">EUR/USD</SelectItem>
-                    <SelectItem value="BTC/USD">BTC/USD</SelectItem>
-                  </>
-                )
-              }
+              {symbols.map((s) => (
+                <SelectItem key={s.symbol} value={s.symbol}>{s.symbol}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
 
@@ -92,16 +103,12 @@ export default function Terminal() {
               priceDirection === 'up' ? 'text-green-500' : priceDirection === 'down' ? 'text-red-500' : ''
             }`}
           >
-            {currentPrice
-              ? symbol.includes('BTC')
-                ? currentPrice.toFixed(2)
-                : currentPrice.toFixed(5)
-              : '---'}
+            {currentPrice ? formatPrice(symbol, currentPrice) : '---'}
             {priceDirection === 'up' && <span className="text-sm">▲</span>}
             {priceDirection === 'down' && <span className="text-sm">▼</span>}
           </div>
 
-          <div className="flex items-center gap-4 text-xs font-mono text-muted-foreground">
+          <div className="flex items-center gap-3 text-xs font-mono text-muted-foreground">
             {signal?.warming && (
               <div className="flex items-center gap-1 text-blue-400 animate-pulse bg-blue-500/10 px-2 py-1 rounded">
                 <Activity size={14} />
@@ -112,6 +119,28 @@ export default function Terminal() {
               <div className="flex items-center gap-1 text-amber-500 animate-pulse bg-amber-500/10 px-2 py-1 rounded">
                 <AlertTriangle size={14} />
                 SAFE MODE
+              </div>
+            )}
+            {entropyReduced && !signal?.safeMode && !signal?.warming && (
+              <div className="flex items-center gap-1 text-amber-400/70 bg-amber-500/5 border border-amber-500/20 px-2 py-1 rounded text-[10px]">
+                <AlertTriangle size={12} />
+                LOW ENTROPY
+              </div>
+            )}
+            {sentimentSuppressed && (
+              <div className="flex items-center gap-1 text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded text-[10px]">
+                <Newspaper size={12} />
+                NEWS OVERRIDE
+              </div>
+            )}
+            {sentimentBias && sentimentBias !== 'Neutral' && !sentimentSuppressed && (
+              <div className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] border ${
+                sentimentBias.includes('Bullish')
+                  ? 'text-green-400 bg-green-500/5 border-green-500/20'
+                  : 'text-red-400 bg-red-500/5 border-red-500/20'
+              }`}>
+                <Newspaper size={12} />
+                {sentimentBias.toUpperCase()}
               </div>
             )}
             <div className="flex items-center gap-1">
@@ -143,7 +172,8 @@ export default function Terminal() {
               isDanger={isDanger}
               isBull={isBull}
               ghostCandle={ghostCandle}
-              ghostConfidence={signal?.confidence}
+              ghostConfidence={(signal as any)?.confidence}
+              ghostDimmed={entropyReduced}
             />
           </div>
 
@@ -151,8 +181,41 @@ export default function Terminal() {
             <IndicatorsPanel signal={signal} />
           </div>
 
-          <div className="h-48 shrink-0 border-t border-border/50 bg-card">
-            <StatsPanel symbol={symbol} />
+          {/* BOTTOM PANEL: tabbed between Stats History and Neural Audit */}
+          <div className="h-48 shrink-0 border-t border-border/50 bg-card flex flex-col">
+            {/* Tab bar */}
+            <div className="flex items-center border-b border-border/50 px-4 h-8 shrink-0 gap-1">
+              <button
+                onClick={() => setBottomTab('STATS')}
+                className={`text-[10px] font-mono tracking-widest px-3 h-full transition-colors ${
+                  bottomTab === 'STATS'
+                    ? 'text-primary border-b-2 border-primary -mb-px'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                TRADE HISTORY
+              </button>
+              <button
+                onClick={() => setBottomTab('NEURAL')}
+                className={`text-[10px] font-mono tracking-widest px-3 h-full transition-colors flex items-center gap-1 ${
+                  bottomTab === 'NEURAL'
+                    ? 'text-primary border-b-2 border-primary -mb-px'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <BarChart2 size={10} />
+                NEURAL AUDIT
+              </button>
+            </div>
+
+            {/* Tab content */}
+            <div className="flex-1 overflow-hidden">
+              {bottomTab === 'STATS' ? (
+                <StatsPanel symbol={symbol} />
+              ) : (
+                <PerformanceDashboard />
+              )}
+            </div>
           </div>
         </div>
 

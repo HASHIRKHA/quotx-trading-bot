@@ -1,7 +1,7 @@
 import React from 'react';
 import { SignalAnalysis, useGetMarketSignal, getGetMarketSignalQueryKey } from '@workspace/api-client-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowUp, ArrowDown, RefreshCw, AlertTriangle, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { ArrowUp, ArrowDown, RefreshCw, AlertTriangle, Loader2, CheckCircle2, XCircle, Newspaper } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useQueryClient } from '@tanstack/react-query';
 import { ExecutionCountdown } from './ExecutionCountdown';
@@ -15,7 +15,35 @@ interface FactorResult {
   detail: string;
 }
 
-export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis & { factors?: FactorResult[]; factorCount?: number; ghostCandle?: unknown; executionTime?: number }; symbol: string }) {
+type ExtendedSignal = SignalAnalysis & {
+  factors?: FactorResult[];
+  factorCount?: number;
+  ghostCandle?: unknown;
+  executionTime?: number;
+  entropyReduced?: boolean;
+  sentimentBias?: string;
+  sentimentSuppressed?: boolean;
+};
+
+function SentimentBadge({ label }: { label: string }) {
+  const config: Record<string, { cls: string; dot: string }> = {
+    'Bullish':           { cls: 'border-green-500/40 bg-green-500/10 text-green-400',   dot: 'bg-green-500' },
+    'Somewhat-Bullish':  { cls: 'border-green-400/30 bg-green-400/5 text-green-400/70', dot: 'bg-green-400' },
+    'Neutral':           { cls: 'border-gray-500/30 bg-gray-500/5 text-gray-400',        dot: 'bg-gray-500' },
+    'Somewhat-Bearish':  { cls: 'border-orange-400/30 bg-orange-400/5 text-orange-400/70', dot: 'bg-orange-400' },
+    'Bearish':           { cls: 'border-red-500/40 bg-red-500/10 text-red-400',          dot: 'bg-red-500' },
+  };
+  const cfg = config[label] ?? config['Neutral'];
+  return (
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[9px] font-mono font-bold tracking-wider ${cfg.cls}`}>
+      <Newspaper size={10} />
+      <div className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+      NEWS: {label.toUpperCase()}
+    </div>
+  );
+}
+
+export function ReasoningSidebar({ signal, symbol }: { signal?: ExtendedSignal; symbol: string }) {
   const queryClient = useQueryClient();
 
   const handleRefresh = () => {
@@ -37,11 +65,15 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis &
   const isWarming = signal.warming === true;
   const isSafe = signal.safeMode;
   const hasSignal = isUp || isDown;
+  const entropyReduced = signal.entropyReduced === true;
+  const sentimentSuppressed = signal.sentimentSuppressed === true;
+  const sentimentBias = signal.sentimentBias;
 
-  // Defensive: confidence may be undefined during the initial handshake
   const confidence = signal?.confidence ?? 0;
   const color = confidence > 70 ? '#22c55e' : confidence > 50 ? '#f59e0b' : '#6b7280';
   const colorClass = confidence > 70 ? 'text-green-500' : confidence > 50 ? 'text-amber-500' : 'text-gray-500';
+  // Entropy-reduced: dim the confidence ring
+  const ringColor = entropyReduced ? color + '99' : color;
 
   const factors: FactorResult[] = (signal as any).factors ?? [];
   const factorCount: number = (signal as any).factorCount ?? 0;
@@ -64,7 +96,7 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis &
           <circle cx="50" cy="50" r="45" fill="transparent" stroke="rgba(255,255,255,0.1)" strokeWidth="10" />
           <motion.circle
             cx="50" cy="50" r="45" fill="transparent"
-            stroke={isWarming ? '#6b7280' : color}
+            stroke={isWarming ? '#6b7280' : ringColor}
             strokeWidth="10" strokeDasharray="283"
             initial={{ strokeDashoffset: 283 }}
             animate={{ strokeDashoffset: isWarming ? 283 : 283 - (283 * confidence) / 100 }}
@@ -76,8 +108,11 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis &
             <Loader2 size={22} className="text-muted-foreground animate-spin" />
           ) : (
             <>
-              <span className={`text-2xl font-bold font-mono ${colorClass}`}>{confidence.toFixed(0)}%</span>
+              <span className={`text-2xl font-bold font-mono ${colorClass} ${entropyReduced ? 'opacity-70' : ''}`}>
+                {confidence.toFixed(0)}%
+              </span>
               <span className="text-[10px] text-muted-foreground">CONFIDENCE</span>
+              {entropyReduced && <span className="text-[8px] text-amber-400/70 tracking-widest">REDUCED</span>}
             </>
           )}
         </div>
@@ -98,13 +133,18 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis &
             isNeutral ? 'border-gray-500/30 bg-gray-500/10 text-gray-400'
             : isUp ? 'border-green-500/30 bg-green-500/10 text-green-500'
             : 'border-red-500/30 bg-red-500/10 text-red-500'
-          }`}
+          } ${entropyReduced ? 'opacity-70' : ''}`}
           style={{ boxShadow: isNeutral ? 'none' : isUp ? '0 0 16px rgba(34,197,94,0.2)' : '0 0 16px rgba(239,68,68,0.2)' }}
         >
           {isUp && <ArrowUp size={20} />}
           {isDown && <ArrowDown size={20} />}
           <span className="text-lg font-bold tracking-widest">{signal.direction}</span>
         </motion.div>
+      )}
+
+      {/* News sentiment badge */}
+      {sentimentBias && sentimentBias !== 'Neutral' && (
+        <SentimentBadge label={sentimentBias} />
       )}
 
       {/* Status alerts */}
@@ -114,6 +154,20 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis &
             className="bg-amber-500/10 border border-amber-500/50 rounded-md p-2 flex items-start gap-2 text-amber-500">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <div className="text-xs font-mono"><strong>SAFE MODE ACTIVE</strong><br/>High entropy — signals suppressed.</div>
+          </motion.div>
+        )}
+        {entropyReduced && !isSafe && !isWarming && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+            className="bg-amber-500/5 border border-amber-500/25 rounded-md p-2 flex items-start gap-2 text-amber-400/80">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <div className="text-xs font-mono"><strong>REDUCED STRENGTH</strong><br/>Entropy soft-block — neural power at 70%.</div>
+          </motion.div>
+        )}
+        {sentimentSuppressed && !isWarming && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+            className="bg-purple-500/10 border border-purple-500/40 rounded-md p-2 flex items-start gap-2 text-purple-400">
+            <Newspaper size={14} className="mt-0.5 shrink-0" />
+            <div className="text-xs font-mono"><strong>NEWS OVERRIDE</strong><br/>Sentiment contradicts technicals — signal neutralized.</div>
           </motion.div>
         )}
         {isWarming && (
@@ -126,7 +180,7 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis &
       </AnimatePresence>
 
       {/* Execution Countdown */}
-      {hasSignal && !isWarming && !isSafe && (signal as any).executionTime && (
+      {hasSignal && !isWarming && !isSafe && !sentimentSuppressed && (signal as any).executionTime && (
         <ExecutionCountdown
           executionTime={(signal as any).executionTime}
           direction={signal.direction}
@@ -173,7 +227,7 @@ export function ReasoningSidebar({ signal, symbol }: { signal?: SignalAnalysis &
         </div>
       )}
 
-      {/* Analysis reasons (when no factors breakdown) */}
+      {/* Analysis reasons */}
       {factors.length === 0 && signal.reasons?.length > 0 && (
         <div className="flex flex-col gap-2">
           <h3 className="text-xs font-mono text-muted-foreground border-b border-border/50 pb-1">ANALYSIS</h3>
