@@ -1,4 +1,5 @@
 {
+  "installCommand": "",
   "buildCommand": "cd ../.. && npm install -g pnpm@9 --quiet && pnpm install --no-frozen-lockfile && cd artifacts/trading-terminal && pnpm run build",
   "outputDirectory": "dist/public",
   "framework": null,
