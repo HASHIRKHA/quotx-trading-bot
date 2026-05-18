@@ -421,16 +421,19 @@ function factorStochasticConfirm(candles: OHLC[]): FactorResult {
 //                                The momentum gate and purity check handle quality — if MACD
 //                                and Momentum both confirm the direction (and are not blocked),
 //                                even 2–3 factors give a meaningful signal.
-//   MIN_CONFIDENCE      50     : only fire above the neutral baseline (50%).
-//                                Weak tie-break signals (4:4 at 38–42%) stay suppressed;
-//                                aligned EMA+MACD+Momentum setups reach 55–70% naturally.
+//   MIN_CONFIDENCE      42     : fire above a moderate baseline. Weak tie-break signals that
+//                                align on 3+ factors with clean purity still provide value.
+//                                42% allows clear directional readings that cleared all gates.
+//   VOLATILITY_THRESHOLD 0.15  : raised from 0.04 → crypto assets regularly move 5–15%
+//                                intraday; a 4% cap blocked all BTC/ETH signals in normal
+//                                sessions. 15% still blocks true crash/flash-crash conditions.
 //   FACTOR_OVERRIDE_COUNT 7    : all-agree bypass unchanged.
 const ENTROPY_HARD_BLOCK = 0.9995;
 const ENTROPY_SOFT_BLOCK = 0.985;
-const VOLATILITY_THRESHOLD = 0.04;
+const VOLATILITY_THRESHOLD = 0.15;
 const REQUIRED_FACTORS = 2;   // 2 confirmed factors in dominant direction — balanced for 5-min binary options
 const FACTOR_OVERRIDE_COUNT = 7;
-const MIN_CONFIDENCE = 50;    // raised from 44 → require above 50% baseline to fire
+const MIN_CONFIDENCE = 42;    // allow aligned directional signals above 42% baseline
 
 // ─── Quotex Platform Signal Factor ────────────────────────────────────────────
 
