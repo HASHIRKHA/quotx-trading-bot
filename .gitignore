@@ -1,48 +1,47 @@
-# Dependencies
+# ── Dependencies ───────────────────────────────────────────────────────────────
 node_modules/
 .pnpm-store/
 
-# Build outputs
+# ── Build outputs ───────────────────────────────────────────────────────────────
 dist/
 build/
 *.tsbuildinfo
 
-# Environment variables — NEVER commit secrets
+# ── Environment / secrets — never commit ───────────────────────────────────────
 .env
 .env.local
 .env.*.local
 
-# Logs
+# ── Logs ───────────────────────────────────────────────────────────────────────
 *.log
+logs/
 
-# OS
+# ── OS ─────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 
-# Editor
+# ── Editor ─────────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# Replit
+# ── Replit (not used in production) ────────────────────────────────────────────
 .replit
 .replitignore
 .config/
 
-# pnpm lockfile (generated locally, not needed for cloud build --no-frozen-lockfile)
-# pnpm-lock.yaml  ← keep commented; add if you want reproducible installs
+# ── AI / agent scaffolding (internal, not part of the product) ─────────────────
+.agents/
+.claude/
+skills-lock.json
 
-# Temp / scratch
+# ── Replit dev sandbox (not part of the product) ───────────────────────────────
+artifacts/mockup-sandbox/
+
+# ── Misc ───────────────────────────────────────────────────────────────────────
 scratch/
 screenshots/
 *.pdf
 build_pdf.py
-
-# Claude internal worktrees
-.claude/worktrees/
-
-# Dev-only audit scripts
-artifacts/trading-terminal/audit.js
-artifacts/trading-terminal/check_console.js
-artifacts/trading-terminal/check_rpc.js
-artifacts/trading-terminal/optimize_kernel.js
-artifacts/trading-terminal/seed_smoke_trades.cjs
+attached_assets/
