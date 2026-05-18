@@ -6,6 +6,10 @@ WORKDIR /app
 # Install pnpm (required for workspace:* dependency resolution)
 RUN npm install -g pnpm@9 --quiet
 
+# Copy workspace config first (includes pnpm catalog definitions)
+COPY package.json ./package.json
+COPY pnpm-workspace.yaml ./pnpm-workspace.yaml
+
 # Copy workspace lib packages that api-server depends on
 COPY lib/api-zod ./lib/api-zod
 COPY lib/db ./lib/db
@@ -15,10 +19,6 @@ COPY artifacts/api-server/package.json ./artifacts/api-server/package.json
 COPY artifacts/api-server/tsconfig.json ./artifacts/api-server/tsconfig.json
 COPY artifacts/api-server/build.mjs ./artifacts/api-server/build.mjs
 COPY artifacts/api-server/src ./artifacts/api-server/src
-
-# Bootstrap pnpm workspace so workspace:* deps resolve correctly
-RUN echo '{"name":"monorepo","private":true,"version":"0.0.0"}' > package.json
-RUN printf 'packages:\n  - "artifacts/api-server"\n  - "lib/*"\n' > pnpm-workspace.yaml
 
 # Install dependencies (workspace-aware, no lockfile on CI is fine)
 RUN pnpm install --no-frozen-lockfile --filter "@workspace/api-server..." 2>&1
