@@ -75,6 +75,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
+    "@supabase/supabase-js": "catalog:",
     "lightweight-charts": "^5.1.0"
   }
 }

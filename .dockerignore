@@ -1,0 +1,15 @@
+node_modules
+.claude
+screenshots
+scratch
+attached_assets
+artifacts/trading-terminal
+artifacts/mockup-sandbox
+artifacts/api-server/dist
+artifacts/api-server/node_modules
+lib/api-client-react
+lib/api-spec
+lib/db/node_modules
+lib/api-zod/node_modules
+*.pdf
+*.py

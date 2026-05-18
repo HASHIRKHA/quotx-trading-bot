@@ -1,25 +1,16 @@
 {
   "compilerOptions": {
-    "isolatedModules": true,
-    "lib": ["es2022"],
-    "module": "esnext",
+    "strict": true,
+    "target": "ESNext",
+    "module": "ESNext",
     "moduleResolution": "bundler",
-    "noEmitOnError": true,
-    "noFallthroughCasesInSwitch": true,
-    "noImplicitOverride": false,
-    "noImplicitReturns": true,
-    "noUnusedLocals": false,
-    "noImplicitAny": true,
-    "noImplicitThis": true,
-    "strictNullChecks": true,
-    "strictFunctionTypes": false,
-    "strictBindCallApply": true,
-    "strictPropertyInitialization": true,
-    "useUnknownInCatchVariables": true,
-    "alwaysStrict": true,
+    "esModuleInterop": true,
     "skipLibCheck": true,
-    "target": "es2022",
-    "types": [],
-    "customConditions": ["workspace"]
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["node"]
   }
 }

@@ -24,11 +24,10 @@ export interface SentimentResult {
 
 /** Maps internal trading symbols to AV News API ticker format */
 const TICKER_MAP: Record<string, string> = {
-  "EUR/USD": "FOREX:EUR",
-  "GBP/USD": "FOREX:GBP",
-  "USD/JPY": "FOREX:JPY",
   "BTC/USD": "CRYPTO:BTC",
   "ETH/USD": "CRYPTO:ETH",
+  "XAU/USD": "FOREX:XAU",   // Alpha Vantage uses FOREX:XAU for Gold sentiment
+  "SOL/USD": "CRYPTO:SOL",
 };
 
 const cache = new Map<string, SentimentResult>();
@@ -135,15 +134,13 @@ export async function getSentiment(symbol: string): Promise<SentimentResult> {
   }
 }
 
-/** Warm-up: pre-fetch sentiment for all symbols on startup */
-export async function warmSentimentCache(symbols: string[]): Promise<void> {
+/** Fire-and-forget sentiment pre-warm — staggers requests to respect AV free tier (1 req/12s). */
+export function warmSentimentCache(symbols: string[]): void {
+  let delay = 0;
   for (const sym of symbols) {
-    try {
-      await getSentiment(sym);
-      // Stagger requests to avoid AV rate-limit (1 req/12s on free tier)
-      await new Promise(resolve => setTimeout(resolve, 13000));
-    } catch {
-      // Non-fatal
-    }
+    setTimeout(() => {
+      getSentiment(sym).catch(() => { /* non-fatal */ });
+    }, delay);
+    delay += 13_000;
   }
 }

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import {
   createChart, ColorType, ISeriesApi, CandlestickData, Time,
-  CandlestickSeries, LineStyle,
+  CandlestickSeries, HistogramSeries, LineStyle,
 } from 'lightweight-charts';
 import { useGetHistoricalData, getGetHistoricalDataQueryKey } from '@workspace/api-client-react';
 
@@ -37,12 +37,15 @@ export function TradingChart({
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const ghostSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const lastCandleRef = useRef<CandlestickData<Time> | null>(null);
 
   // Ghost candle fluid update state — stored in refs so the 500ms interval always reads fresh values
   const ghostParamsRef = useRef<GhostParams | null>(null);
   const ghostDimmedRef = useRef<boolean>(false);
   const ghostConfRef = useRef<number>(0.5);
+  const entryPriceLineRef = useRef<any>(null);
+  const entryLineDirectionRef = useRef<string | null>(null);
 
   const { data: historicalData } = useGetHistoricalData(symbol, { interval }, {
     query: {
@@ -57,29 +60,43 @@ export function TradingChart({
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#0a0a0f' },
-        textColor: '#D9D9D9',
+        background: { type: ColorType.Solid, color: '#050d07' },
+        textColor: 'rgba(160,220,175,0.7)',
         fontFamily: 'JetBrains Mono',
       },
       grid: {
-        vertLines: { color: 'rgba(255,255,255,0.05)' },
-        horzLines: { color: 'rgba(255,255,255,0.05)' },
+        vertLines: { color: 'rgba(0,255,100,0.04)' },
+        horzLines: { color: 'rgba(0,255,100,0.04)' },
       },
       crosshair: { mode: 1 },
-      rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
+      rightPriceScale: {
+        borderColor: 'rgba(0,255,100,0.1)',
+        scaleMargins: { top: 0.08, bottom: 0.18 },
+      },
       timeScale: {
-        borderColor: 'rgba(255,255,255,0.1)',
+        borderColor: 'rgba(0,255,100,0.1)',
         timeVisible: true,
-        secondsVisible: true,
+        secondsVisible: false,
       },
     });
 
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e',
-      downColor: '#ef4444',
+      upColor: '#00e676',
+      downColor: '#ff5252',
       borderVisible: false,
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
+      wickUpColor: '#00e676',
+      wickDownColor: '#ff5252',
+    });
+
+    // Volume histogram — pinned to bottom 15% of pane
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      color: 'rgba(0,230,118,0.2)',
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'volume',
+    });
+    chart.priceScale('volume').applyOptions({
+      scaleMargins: { top: 0.85, bottom: 0 },
+      visible: false,
     });
 
     // Ghost candle series — purple, semi-transparent
@@ -95,6 +112,7 @@ export function TradingChart({
 
     chartRef.current = chart;
     seriesRef.current = series as unknown as ISeriesApi<'Candlestick'>;
+    volumeSeriesRef.current = volumeSeries as unknown as ISeriesApi<'Histogram'>;
     ghostSeriesRef.current = ghostSeries as unknown as ISeriesApi<'Candlestick'>;
 
     const handleResize = () => {
@@ -114,24 +132,38 @@ export function TradingChart({
     };
   }, []);
 
-  // Load historical data
+  // Load historical data + volume
   useEffect(() => {
     if (!historicalData || !seriesRef.current) return;
     if (!Array.isArray(historicalData) || historicalData.length === 0) return;
 
-    const formatted: CandlestickData<Time>[] = historicalData
-      .map((c) => ({
-        time: c.time as Time,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      }))
-      .sort((a, b) => (a.time as number) - (b.time as number));
+    const sorted = [...historicalData].sort((a, b) => a.time - b.time);
+
+    const formatted: CandlestickData<Time>[] = sorted.map((c) => ({
+      time: c.time as Time,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+
+    const volumeData = sorted.map((c) => ({
+      time: c.time as Time,
+      value: c.volume ?? 0,
+      color: c.close >= c.open ? 'rgba(0,230,118,0.25)' : 'rgba(255,82,82,0.25)',
+    }));
 
     try {
       seriesRef.current.setData(formatted);
+      if (volumeSeriesRef.current) volumeSeriesRef.current.setData(volumeData as any);
       if (formatted.length > 0) lastCandleRef.current = formatted[formatted.length - 1];
+      // Reset Y-axis scale and scroll to latest data whenever we load a new symbol.
+      // Without this the chart keeps the previous pair's price range and all candles
+      // appear off-screen (the "empty chart / wrong Y-axis" bug when switching pairs).
+      if (chartRef.current) {
+        chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+        chartRef.current.timeScale().fitContent();
+      }
     } catch {}
   }, [historicalData]);
 
@@ -139,12 +171,15 @@ export function TradingChart({
   useEffect(() => {
     if (!currentPrice || !seriesRef.current || !lastCandleRef.current) return;
     const now = Math.floor(Date.now() / 1000);
-    const intervalSecs = interval === '1m' ? 60 : interval === '5m' ? 300 : 900;
+    const intervalSecs = interval === '5m' ? 300 : interval === '10m' ? 600 : 60;
     const currentCandle = lastCandleRef.current;
     let newCandle: CandlestickData<Time>;
 
     if (now - (currentCandle.time as number) >= intervalSecs) {
-      newCandle = { time: now as Time, open: currentPrice, high: currentPrice, low: currentPrice, close: currentPrice };
+      // Round new candle timestamp to interval boundary so the time axis stays
+      // consistent with historical candles (no second-precision labels).
+      const alignedTime = Math.floor(now / intervalSecs) * intervalSecs;
+      newCandle = { time: alignedTime as Time, open: currentPrice, high: currentPrice, low: currentPrice, close: currentPrice };
     } else {
       newCandle = {
         ...currentCandle,
@@ -193,13 +228,19 @@ export function TradingChart({
       const params = ghostParamsRef.current;
       if (!params || !lastCandleRef.current) {
         try { ghostSeriesRef.current.setData([]); } catch {}
+        // Remove entry price line when no signal
+        if (entryPriceLineRef.current && seriesRef.current) {
+          try { seriesRef.current.removePriceLine(entryPriceLineRef.current); } catch {}
+          entryPriceLineRef.current = null;
+        }
         return;
       }
 
       const livePrice = lastCandleRef.current.close;
       const conf = ghostConfRef.current;
       const dimmed = ghostDimmedRef.current;
-      const alpha = Math.max(0.2, conf) * (dimmed ? 0.35 : 1.0);
+      // Minimum 0.55 alpha so ghost is always clearly visible even at 55% confidence
+      const alpha = Math.max(0.55, conf) * (dimmed ? 0.4 : 1.0);
 
       let gc: CandlestickData<Time>;
       if (params.direction === 'UP') {
@@ -222,15 +263,39 @@ export function TradingChart({
 
       try {
         ghostSeriesRef.current.applyOptions({
-          upColor: `rgba(168,85,247,${(alpha * 0.5).toFixed(2)})`,
-          downColor: `rgba(168,85,247,${(alpha * 0.5).toFixed(2)})`,
-          borderUpColor: `rgba(168,85,247,${alpha.toFixed(2)})`,
-          borderDownColor: `rgba(168,85,247,${alpha.toFixed(2)})`,
-          wickUpColor: `rgba(168,85,247,${(alpha * 0.8).toFixed(2)})`,
-          wickDownColor: `rgba(168,85,247,${(alpha * 0.8).toFixed(2)})`,
+          // Body: 0.82 → very solid, clearly visible candle body
+          upColor:         `rgba(168,85,247,${(alpha * 0.82).toFixed(2)})`,
+          downColor:       `rgba(168,85,247,${(alpha * 0.82).toFixed(2)})`,
+          // Border: full alpha — crisp outline
+          borderUpColor:   `rgba(168,85,247,${Math.min(1, alpha * 1.1).toFixed(2)})`,
+          borderDownColor: `rgba(168,85,247,${Math.min(1, alpha * 1.1).toFixed(2)})`,
+          // Wick: full alpha so it's clearly readable
+          wickUpColor:     `rgba(168,85,247,${alpha.toFixed(2)})`,
+          wickDownColor:   `rgba(168,85,247,${alpha.toFixed(2)})`,
         });
         ghostSeriesRef.current.setData([gc]);
       } catch {}
+
+      // Entry price line — remove and recreate when direction flips so the
+      // correct colour and label are always shown for the current signal.
+      const directionChanged = entryLineDirectionRef.current !== params.direction;
+      if (seriesRef.current && (directionChanged || !entryPriceLineRef.current)) {
+        if (entryPriceLineRef.current) {
+          try { seriesRef.current.removePriceLine(entryPriceLineRef.current); } catch {}
+          entryPriceLineRef.current = null;
+        }
+        entryLineDirectionRef.current = params.direction;
+        try {
+          entryPriceLineRef.current = seriesRef.current.createPriceLine({
+            price: livePrice,
+            color: params.direction === 'UP' ? 'rgba(38,166,154,0.8)' : 'rgba(239,83,80,0.8)',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: params.direction === 'UP' ? '▲ ENTRY' : '▼ ENTRY',
+          });
+        } catch {}
+      }
     };
 
     const id = setInterval(tick, 500);
@@ -257,15 +322,15 @@ export function TradingChart({
 
       {/* Ghost candle legend */}
       {ghostCandle && (
-        <div className={`absolute bottom-8 left-3 flex items-center gap-1.5 text-[10px] font-mono px-2 py-1 rounded border ${
+        <div className={`absolute bottom-8 left-3 flex items-center gap-2 text-[11px] font-mono px-3 py-1.5 rounded-md border ${
           ghostDimmed
-            ? 'text-purple-400/50 bg-black/40 border-purple-500/15'
-            : 'text-purple-400 bg-black/60 border-purple-500/30'
-        }`}>
-          <div className={`w-2 h-2 rounded-sm ${ghostDimmed ? 'bg-purple-500/30' : 'bg-purple-500 opacity-70'}`} />
-          PREDICTED +60s
-          {ghostConfidence && <span className="ml-1 text-purple-300">({ghostConfidence.toFixed(0)}%)</span>}
-          {ghostDimmed && <span className="ml-1 text-amber-400/70 text-[9px]">REDUCED</span>}
+            ? 'text-purple-400/60 bg-purple-900/20 border-purple-500/20'
+            : 'text-purple-300 bg-purple-900/40 border-purple-400/50 shadow-[0_0_12px_rgba(168,85,247,0.25)]'
+        }`} style={ghostDimmed ? {} : { backdropFilter: 'blur(4px)' }}>
+          <div className={`w-2.5 h-2.5 rounded-sm ${ghostDimmed ? 'bg-purple-500/40' : 'bg-purple-400 shadow-[0_0_6px_rgba(168,85,247,0.8)]'}`} />
+          <span className="font-bold tracking-wide">PREDICTED {interval === '5m' ? '+5min' : interval === '10m' ? '+10min' : '+1min'}</span>
+          {ghostConfidence && <span className="text-purple-200 font-bold">({ghostConfidence.toFixed(0)}%)</span>}
+          {ghostDimmed && <span className="text-amber-400/70 text-[9px] font-normal">REDUCED</span>}
         </div>
       )}
     </div>

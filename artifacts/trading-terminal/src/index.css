@@ -3,6 +3,12 @@
 @import "tw-animate-css";
 @plugin "@tailwindcss/typography";
 
+/* Explicit source scanning — monorepo path requires explicit @source directives */
+@source "./components";
+@source "./pages";
+@source "./hooks";
+@source "./lib";
+
 @custom-variant dark (&:is(.dark *));
 
 @layer base {
@@ -12,6 +18,39 @@
   @keyframes safeModePulse { 0%,100%{opacity:0.7} 50%{opacity:1;box-shadow:0 0 20px rgba(245,158,11,0.6)} }
   @keyframes macdPing { 0%{transform:scale(0);opacity:1} 100%{transform:scale(3);opacity:0} }
   @keyframes fadeInCandle { from{opacity:0} to{opacity:1} }
+
+  /* Diagonal light streak animations */
+  @keyframes streakA {
+    0%   { transform: translateX(-120%) translateY(-120%) rotate(-38deg); opacity: 0; }
+    8%   { opacity: 0.7; }
+    88%  { opacity: 0.5; }
+    100% { transform: translateX(120%) translateY(120%) rotate(-38deg); opacity: 0; }
+  }
+  @keyframes streakB {
+    0%   { transform: translateX(-140%) translateY(-80%) rotate(-42deg); opacity: 0; }
+    10%  { opacity: 0.4; }
+    85%  { opacity: 0.3; }
+    100% { transform: translateX(140%) translateY(80%) rotate(-42deg); opacity: 0; }
+  }
+  @keyframes streakC {
+    0%   { transform: translateX(-100%) translateY(-150%) rotate(-35deg); opacity: 0; }
+    12%  { opacity: 0.6; }
+    80%  { opacity: 0.4; }
+    100% { transform: translateX(100%) translateY(150%) rotate(-35deg); opacity: 0; }
+  }
+
+  /* Ticker scroll */
+  @keyframes tickerScroll {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+
+  /* Signal pulse ring */
+  @keyframes signalPing {
+    0%   { transform: scale(1); opacity: 0.8; }
+    70%  { transform: scale(1.4); opacity: 0; }
+    100% { transform: scale(1.4); opacity: 0; }
+  }
 
   * {
     @apply border-border;
@@ -72,87 +111,163 @@
 }
 
 :root {
-  --background: 222 47% 5%;
-  --foreground: 210 40% 92%;
-  --border: 215 25% 15%;
-  
-  --card: 222 47% 8%;
-  --card-foreground: 210 40% 92%;
-  --card-border: 215 25% 15%;
-  
-  --popover: 222 47% 8%;
-  --popover-foreground: 210 40% 92%;
-  --popover-border: 215 25% 15%;
-  
-  --primary: 200 100% 55%;
-  --primary-foreground: 222 47% 5%;
-  
-  --secondary: 215 25% 15%;
-  --secondary-foreground: 210 40% 92%;
-  
-  --muted: 215 25% 12%;
-  --muted-foreground: 215 20% 50%;
-  
-  --accent: 142 76% 45%;
-  --accent-foreground: 222 47% 5%;
-  
+  /* ── Deep dark green-black base (Traderly aesthetic) ── */
+  --background: 140 45% 3%;
+  --foreground: 140 25% 88%;
+  --border: 140 20% 12%;
+
+  --card: 140 40% 5%;
+  --card-foreground: 140 25% 88%;
+  --card-border: 140 20% 12%;
+
+  --popover: 140 40% 5%;
+  --popover-foreground: 140 25% 88%;
+  --popover-border: 140 20% 12%;
+
+  /* ── Neon green primary ── */
+  --primary: 150 100% 50%;
+  --primary-foreground: 140 45% 3%;
+
+  --secondary: 140 25% 10%;
+  --secondary-foreground: 140 25% 88%;
+
+  --muted: 140 22% 8%;
+  --muted-foreground: 140 15% 48%;
+
+  --accent: 150 100% 50%;
+  --accent-foreground: 140 45% 3%;
+
   --destructive: 0 84% 55%;
-  --destructive-foreground: 210 40% 92%;
-  
-  --input: 215 25% 15%;
-  --ring: 200 100% 55%;
-  
-  --sidebar: 222 47% 8%;
-  --sidebar-foreground: 210 40% 92%;
-  --sidebar-border: 215 25% 15%;
-  
+  --destructive-foreground: 140 25% 88%;
+
+  --input: 140 25% 10%;
+  --ring: 150 100% 50%;
+
+  --sidebar: 140 40% 5%;
+  --sidebar-foreground: 140 25% 88%;
+  --sidebar-border: 140 20% 12%;
+
   --app-font-sans: 'Space Grotesk', sans-serif;
   --app-font-serif: Georgia, serif;
   --app-font-mono: 'JetBrains Mono', monospace;
-  
+
   --radius: 0.5rem;
 }
 
 .dark {
-  --background: 222 47% 5%;
-  --foreground: 210 40% 92%;
-  --border: 215 25% 15%;
-  
-  --card: 222 47% 8%;
-  --card-foreground: 210 40% 92%;
-  --card-border: 215 25% 15%;
-  
-  --popover: 222 47% 8%;
-  --popover-foreground: 210 40% 92%;
-  --popover-border: 215 25% 15%;
-  
-  --primary: 200 100% 55%;
-  --primary-foreground: 222 47% 5%;
-  
-  --secondary: 215 25% 15%;
-  --secondary-foreground: 210 40% 92%;
-  
-  --muted: 215 25% 12%;
-  --muted-foreground: 215 20% 50%;
-  
-  --accent: 142 76% 45%;
-  --accent-foreground: 222 47% 5%;
-  
+  --background: 140 45% 3%;
+  --foreground: 140 25% 88%;
+  --border: 140 20% 12%;
+  --card: 140 40% 5%;
+  --card-foreground: 140 25% 88%;
+  --card-border: 140 20% 12%;
+  --popover: 140 40% 5%;
+  --popover-foreground: 140 25% 88%;
+  --popover-border: 140 20% 12%;
+  --primary: 150 100% 50%;
+  --primary-foreground: 140 45% 3%;
+  --secondary: 140 25% 10%;
+  --secondary-foreground: 140 25% 88%;
+  --muted: 140 22% 8%;
+  --muted-foreground: 140 15% 48%;
+  --accent: 150 100% 50%;
+  --accent-foreground: 140 45% 3%;
   --destructive: 0 84% 55%;
-  --destructive-foreground: 210 40% 92%;
-  
-  --input: 215 25% 15%;
-  --ring: 200 100% 55%;
-  
-  --sidebar: 222 47% 8%;
-  --sidebar-foreground: 210 40% 92%;
-  --sidebar-border: 215 25% 15%;
+  --destructive-foreground: 140 25% 88%;
+  --input: 140 25% 10%;
+  --ring: 150 100% 50%;
+  --sidebar: 140 40% 5%;
+  --sidebar-foreground: 140 25% 88%;
+  --sidebar-border: 140 20% 12%;
 }
 
+/* ── Light-streak animated background elements ── */
+.light-streak {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 9999px;
+  filter: blur(1px);
+}
+.light-streak-a {
+  width: 3px;
+  height: 55vh;
+  background: linear-gradient(to bottom, transparent 0%, rgba(0,255,100,0.18) 40%, rgba(0,255,100,0.12) 60%, transparent 100%);
+  top: -10vh;
+  left: 58%;
+  animation: streakA 14s ease-in-out infinite;
+}
+.light-streak-b {
+  width: 2px;
+  height: 70vh;
+  background: linear-gradient(to bottom, transparent 0%, rgba(0,220,80,0.1) 50%, transparent 100%);
+  top: -15vh;
+  left: 72%;
+  animation: streakB 18s ease-in-out infinite 4s;
+}
+.light-streak-c {
+  width: 2px;
+  height: 45vh;
+  background: linear-gradient(to bottom, transparent 0%, rgba(0,255,120,0.13) 45%, transparent 100%);
+  top: -5vh;
+  left: 84%;
+  animation: streakC 22s ease-in-out infinite 9s;
+}
+.light-streak-d {
+  width: 1px;
+  height: 60vh;
+  background: linear-gradient(to bottom, transparent 0%, rgba(0,255,80,0.08) 50%, transparent 100%);
+  top: -20vh;
+  left: 91%;
+  animation: streakA 26s ease-in-out infinite 6s;
+}
+
+/* ── Ticker scroll ── */
+.ticker-track {
+  display: flex;
+  animation: tickerScroll 30s linear infinite;
+  width: max-content;
+}
+.ticker-track:hover {
+  animation-play-state: paused;
+}
+
+/* ── Signal ping ring ── */
+.signal-ping {
+  animation: signalPing 1.8s ease-out infinite;
+}
+
+/* ── Green glow button ── */
+.btn-green-glow {
+  box-shadow: 0 0 0 0 rgba(0,255,100,0);
+  transition: box-shadow 0.25s ease;
+}
+.btn-green-glow:hover {
+  box-shadow: 0 0 18px rgba(0,255,100,0.45), 0 0 6px rgba(0,255,100,0.3);
+}
+
+/* ── Chart container glows ── */
 .chart-bullish-glow {
   animation: pulseGlow 2s infinite;
 }
-
 .chart-bearish-glow {
   animation: pulseDanger 2s infinite;
 }
+
+/* ── Neon border shimmer ── */
+.neon-border {
+  border: 1px solid rgba(0,255,100,0.2);
+  box-shadow: inset 0 0 12px rgba(0,255,100,0.04), 0 0 0 1px rgba(0,255,100,0.06);
+}
+
+/* ── Traderly green card ── */
+.g-card {
+  background: rgba(10, 22, 12, 0.85);
+  border: 1px solid rgba(0, 255, 100, 0.1);
+  backdrop-filter: blur(4px);
+}
+
+/* ── Scrollbar green tint ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+::-webkit-scrollbar-thumb { background: rgba(0,255,100,0.2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,255,100,0.4); }

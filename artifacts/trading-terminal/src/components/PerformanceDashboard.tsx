@@ -81,9 +81,10 @@ export function PerformanceDashboard() {
   const { winRate, last10Rate, wins, total, bySymbol, last20 } = perf;
   const safeBySymbol = Array.isArray(bySymbol) ? bySymbol : [];
   const safeLast20 = Array.isArray(last20) ? last20 : [];
+  const hasData = total > 0;
 
-  const winColor = winRate >= 60 ? 'text-green-500' : winRate >= 45 ? 'text-amber-500' : 'text-red-500';
-  const last10Color = last10Rate >= 60 ? 'text-green-500' : last10Rate >= 45 ? 'text-amber-500' : 'text-red-500';
+  const winColor = !hasData ? 'text-muted-foreground' : winRate >= 60 ? 'text-green-500' : winRate >= 45 ? 'text-amber-500' : 'text-red-500';
+  const last10Color = !hasData ? 'text-muted-foreground' : last10Rate >= 60 ? 'text-green-500' : last10Rate >= 45 ? 'text-amber-500' : 'text-red-500';
 
   return (
     <div className="flex h-full p-4 gap-6 overflow-x-auto">
@@ -107,7 +108,7 @@ export function PerformanceDashboard() {
               />
             </svg>
             <div className="text-center -mt-[84px] mb-[24px]">
-              <div className={`font-mono font-bold text-sm ${winColor}`}>{winRate.toFixed(1)}%</div>
+              <div className={`font-mono font-bold text-sm ${winColor}`}>{hasData ? `${winRate.toFixed(1)}%` : '—'}</div>
             </div>
             <span className="text-[9px] font-mono text-muted-foreground tracking-wider">ALL TIME</span>
           </div>
@@ -127,7 +128,7 @@ export function PerformanceDashboard() {
               />
             </svg>
             <div className="text-center -mt-[68px] mb-[20px]">
-              <div className={`font-mono font-bold text-xs ${last10Color}`}>{last10Rate.toFixed(0)}%</div>
+              <div className={`font-mono font-bold text-xs ${last10Color}`}>{hasData ? `${last10Rate.toFixed(0)}%` : '—'}</div>
             </div>
             <span className="text-[9px] font-mono text-muted-foreground tracking-wider">LAST 10</span>
           </div>

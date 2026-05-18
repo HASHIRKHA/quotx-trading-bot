@@ -7,24 +7,25 @@ interface ExecutionCountdownProps {
   direction?: string;
   confidence?: number;
   active?: boolean;
+  intervalSecs?: number;
 }
 
 export function ExecutionCountdown({
-  executionTime, direction, confidence, active,
+  executionTime, direction, confidence, active, intervalSecs = 60,
 }: ExecutionCountdownProps) {
-  const [remaining, setRemaining] = useState<number>(60);
+  const [remaining, setRemaining] = useState<number>(intervalSecs);
   const [executing, setExecuting] = useState(false);
   const flashTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!executionTime || !active) {
-      setRemaining(60);
+      setRemaining(intervalSecs);
       setExecuting(false);
       return;
     }
 
     const update = () => {
-      const diff = Math.max(0, Math.ceil((executionTime - Date.now()) / 1000));
+      const diff = Math.max(0, Math.round((executionTime - Date.now()) / 1000));
       setRemaining(diff);
 
       if (diff === 0 && !executing) {
@@ -39,12 +40,15 @@ export function ExecutionCountdown({
     return () => {
       clearInterval(interval);
       if (flashTimeout.current) clearTimeout(flashTimeout.current);
+      setExecuting(false);
     };
-  }, [executionTime, active]);
+  }, [executionTime, active, intervalSecs]);
 
-  const progress = Math.max(0, Math.min(1, remaining / 60));
-  const isUrgent = remaining <= 10;
-  const isHot = remaining <= 3;
+  const progress = Math.max(0, Math.min(1, remaining / intervalSecs));
+  const urgentThreshold = Math.max(10, Math.floor(intervalSecs * 0.1));
+  const hotThreshold = Math.max(3, Math.floor(intervalSecs * 0.03));
+  const isUrgent = remaining <= urgentThreshold;
+  const isHot = remaining <= hotThreshold;
   const isUp = direction === 'UP';
 
   if (!active) return null;

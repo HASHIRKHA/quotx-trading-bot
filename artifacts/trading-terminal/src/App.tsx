@@ -5,6 +5,13 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useEffect } from "react";
 import Terminal from "@/pages/Terminal";
 import NotFound from "@/pages/not-found";
+import { setBaseUrl } from "@workspace/api-client-react";
+
+// Point the generated API client at the Railway backend in production.
+// VITE_API_URL = "https://your-app.railway.app" — set in Vercel env vars.
+// In development, empty string → relative paths → Vite proxy → localhost:3001.
+const _prodApiUrl = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
+setBaseUrl(_prodApiUrl.replace(/\/+$/, '') || null);
 
 const queryClient = new QueryClient();
 

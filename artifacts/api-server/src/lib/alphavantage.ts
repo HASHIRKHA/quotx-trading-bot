@@ -48,10 +48,10 @@ export async function fetchHistoricalForex(symbol: string, interval = "1min"): P
 
   let url: string;
   if (isCrypto) {
-    url = `${AV_BASE}?function=CRYPTO_INTRADAY&symbol=BTC&market=USD&interval=${avInterval}&apikey=${apiKey}&outputsize=compact`;
+    url = `${AV_BASE}?function=CRYPTO_INTRADAY&symbol=BTC&market=USD&interval=${avInterval}&apikey=${apiKey}&outputsize=full`;
   } else {
     const [from, to] = symbol.split("/");
-    url = `${AV_BASE}?function=FX_INTRADAY&from_symbol=${from}&to_symbol=${to}&interval=${avInterval}&apikey=${apiKey}&outputsize=compact`;
+    url = `${AV_BASE}?function=FX_INTRADAY&from_symbol=${from}&to_symbol=${to}&interval=${avInterval}&apikey=${apiKey}&outputsize=full`;
   }
 
   try {
