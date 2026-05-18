@@ -45,3 +45,13 @@ screenshots/
 *.pdf
 build_pdf.py
 attached_assets/
+scripts/
+.npmrc
+.replit
+.replitignore
+replit.md
+**/.replit-artifact/
+
+# Lock files (generated — do not commit for cloud build compatibility)
+package-lock.json
+pnpm-lock.yaml
