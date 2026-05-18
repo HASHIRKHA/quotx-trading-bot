@@ -246,9 +246,11 @@ export default function Terminal() {
 
   const { data: signal } = useQuery<any>({
     queryKey: ['signal', symbol, timeframe],
-    queryFn: () =>
-      fetch(`/api/market/signal/${encodeURIComponent(symbol)}?interval=${timeframe}`)
-        .then(r => r.json()),
+    queryFn: () => {
+      const base = (window as any).__QUOTX_API_BASE__ ?? '';
+      return fetch(`${base}/api/market/signal/${encodeURIComponent(symbol)}?interval=${timeframe}`)
+        .then(r => r.json());
+    },
     refetchInterval: 7000,
   });
 
