@@ -64,3 +64,5 @@ seed_smoke_trades.cjs
 # Lock files (generated — do not commit for cloud build compatibility)
 package-lock.json
 pnpm-lock.yaml
+
+.vercel
