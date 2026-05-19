@@ -127,11 +127,13 @@ async function resolvePendingSignals(): Promise<void> {
       });
 
       // Fire-and-forget weight update — never blocks the resolver loop
+      // Pass symbol so both global and per-symbol tables are updated.
       updateWeightsFromResolvedSignal(
         signal.id,
         signal.direction,
         outcome,
         signal.factors,
+        signal.symbol,
       ).catch(() => { /* non-fatal */ });
 
       logger.debug(

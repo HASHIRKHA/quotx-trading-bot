@@ -61,9 +61,16 @@ async function sbPatch<T>(path: string, body: unknown): Promise<T> {
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
+// ── Global weights cache (fallback / cold-start) ──────────────────────────────
 let weightCache: Map<string, number> | null = null;
 let weightCacheTs = 0;
 let weightCacheInFlight: Promise<Map<string, number>> | null = null;
+
+// ── Per-symbol weights cache ──────────────────────────────────────────────────
+// Keyed by symbol. Each entry holds the merged map (symbol-specific overrides
+// global) and the timestamp of the last fetch.
+const symbolWeightCache = new Map<string, { map: Map<string, number>; ts: number }>();
+const symbolWeightInFlight = new Map<string, Promise<Map<string, number>>>();
 
 interface FactorWeightRow {
   factor_name: string;
@@ -103,10 +110,66 @@ export async function getFactorWeights(): Promise<Map<string, number>> {
   return weightCacheInFlight;
 }
 
+/**
+ * Returns a merged Map<factorName, weightMultiplier> for a specific symbol.
+ * Per-symbol weights take priority; global weights fill any gaps (cold-start).
+ * Cached per-symbol for 10 min.
+ */
+export async function getFactorWeightsBySymbol(symbol: string): Promise<Map<string, number>> {
+  const now = Date.now();
+  const cached = symbolWeightCache.get(symbol);
+  if (cached && now - cached.ts < CACHE_TTL_MS) return cached.map;
+
+  // Coalesce concurrent callers for the same symbol
+  const inFlight = symbolWeightInFlight.get(symbol);
+  if (inFlight) return inFlight;
+
+  const promise = (async () => {
+    try {
+      // Fetch global + per-symbol weights in parallel
+      const [globalWeights, symbolRows] = await Promise.all([
+        getFactorWeights(),
+        sbGet<FactorWeightRow[]>(
+          `factor_weights_by_symbol?symbol=eq.${encodeURIComponent(symbol)}&select=factor_name,weight`,
+        ),
+      ]);
+
+      // Start with globals as base, then overlay symbol-specific values
+      const merged = new Map(globalWeights);
+      for (const row of symbolRows) {
+        const w = parseFloat(String(row.weight));
+        if (w > 0) merged.set(row.factor_name, w);
+      }
+
+      symbolWeightCache.set(symbol, { map: merged, ts: Date.now() });
+      logger.debug({ symbol, symbolRows: symbolRows.length }, "Per-symbol weights loaded");
+      return merged;
+    } catch (err) {
+      logger.warn({ err, symbol }, "Failed to load per-symbol weights — using globals");
+      const fallback = await getFactorWeights();
+      return fallback;
+    } finally {
+      symbolWeightInFlight.delete(symbol);
+    }
+  })();
+
+  symbolWeightInFlight.set(symbol, promise);
+  return promise;
+}
+
 /** Force-invalidate the weight cache (called after backtest populates weights) */
 export function invalidateWeightCache(): void {
   weightCache   = null;
   weightCacheTs = 0;
+}
+
+/** Invalidate per-symbol cache for one symbol (or all if omitted) */
+export function invalidateSymbolWeightCache(symbol?: string): void {
+  if (symbol) {
+    symbolWeightCache.delete(symbol);
+  } else {
+    symbolWeightCache.clear();
+  }
 }
 
 // ── Signal logging ─────────────────────────────────────────────────────────────
@@ -370,9 +433,9 @@ interface FactorWeightRow {
 }
 
 /**
- * Updates factor_weights in Supabase based on a resolved signal's outcome.
- * Only factors that were CONFIRMED and aligned with the signal direction
- * receive an update — unconfirmed / neutral factors are not penalised.
+ * Updates factor_weights (global) AND factor_weights_by_symbol (per-pair)
+ * based on a resolved signal's outcome.
+ * Only confirmed factors aligned with the signal direction receive an update.
  * Fire-and-forget safe — never throws.
  */
 export async function updateWeightsFromResolvedSignal(
@@ -380,6 +443,7 @@ export async function updateWeightsFromResolvedSignal(
   signalDirection: string,
   outcome:         "WIN" | "LOSS" | "TIE",
   factors:         FactorResult[],
+  symbol?:         string,
 ): Promise<void> {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
   if (outcome === "TIE") return; // ties carry no learning signal
@@ -391,31 +455,29 @@ export async function updateWeightsFromResolvedSignal(
     );
     if (relevant.length === 0) return;
 
-    // Load current weights for these factors in one request
+    const isWin = outcome === "WIN";
+    const now   = new Date().toISOString();
+
+    // ── 1. Update global factor_weights ────────────────────────────────────────
     const names   = relevant.map((f) => encodeURIComponent(f.name)).join(",");
     const current = await sbGet<FactorWeightRow[]>(
       `factor_weights?factor_name=in.(${names})&select=factor_name,weight,win_rate,sample_count`,
     );
-    const weightMap = new Map(current.map((r) => [r.factor_name, r]));
-
-    const isWin = outcome === "WIN";
+    const globalMap = new Map(current.map((r) => [r.factor_name, r]));
 
     for (const factor of relevant) {
-      const row = weightMap.get(factor.name) ?? {
+      const row = globalMap.get(factor.name) ?? {
         factor_name:  factor.name,
         weight:       1.0,
         win_rate:     0.5,
         sample_count: 0,
       };
 
-      // Running win-rate (incremental average)
       const newSamples = Number(row.sample_count) + 1;
       const prevWins   = Math.round(Number(row.win_rate) * Number(row.sample_count));
       const newWins    = prevWins + (isWin ? 1 : 0);
       const newWinRate = newWins / newSamples;
-
-      // EMA toward win/loss target
-      const newWeight = Math.max(
+      const newWeight  = Math.max(
         WEIGHT_MIN,
         Math.min(
           WEIGHT_MAX,
@@ -423,21 +485,78 @@ export async function updateWeightsFromResolvedSignal(
         ),
       );
 
-      // PATCH existing row (factor_weights has unique constraint on factor_name)
       await sbPatch<unknown>(
         `factor_weights?factor_name=eq.${encodeURIComponent(factor.name)}`,
         {
           weight:       parseFloat(newWeight.toFixed(4)),
           win_rate:     parseFloat(newWinRate.toFixed(4)),
           sample_count: newSamples,
-          last_updated: new Date().toISOString(),
+          last_updated: now,
         },
       );
     }
 
+    // ── 2. Update per-symbol factor_weights_by_symbol ─────────────────────────
+    // Only runs when the caller supplies a symbol (always from autoResolver).
+    if (symbol) {
+      // Load existing per-symbol rows for these factors
+      const symRows = await sbGet<FactorWeightRow[]>(
+        `factor_weights_by_symbol?symbol=eq.${encodeURIComponent(symbol)}&factor_name=in.(${names})&select=factor_name,weight,win_rate,sample_count`,
+      );
+      const symMap = new Map(symRows.map((r) => [r.factor_name, r]));
+
+      // Build upsert payload for all relevant factors in one request
+      const upsertRows = relevant.map((factor) => {
+        const existing = symMap.get(factor.name) ?? {
+          weight:       1.0,
+          win_rate:     0.5,
+          sample_count: 0,
+        };
+
+        const newSamples = Number(existing.sample_count) + 1;
+        const prevWins   = Math.round(Number(existing.win_rate) * Number(existing.sample_count));
+        const newWins    = prevWins + (isWin ? 1 : 0);
+        const newWinRate = newWins / newSamples;
+        const newWeight  = Math.max(
+          WEIGHT_MIN,
+          Math.min(
+            WEIGHT_MAX,
+            (1 - EMA_ALPHA) * Number(existing.weight) + EMA_ALPHA * (isWin ? WIN_TARGET : LOSS_TARGET),
+          ),
+        );
+
+        return {
+          symbol,
+          factor_name:  factor.name,
+          weight:       parseFloat(newWeight.toFixed(4)),
+          win_rate:     parseFloat(newWinRate.toFixed(4)),
+          sample_count: newSamples,
+          last_updated: now,
+        };
+      });
+
+      // Upsert in one request — Supabase resolves conflicts on (symbol, factor_name)
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/factor_weights_by_symbol`, {
+        method:  "POST",
+        headers: {
+          ...sbHeaders(),
+          Prefer: "resolution=merge-duplicates,return=minimal",
+        },
+        body:   JSON.stringify(upsertRows),
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`SB upsert factor_weights_by_symbol → ${res.status}: ${text}`);
+      }
+
+      // Invalidate per-symbol cache so next signal fetch uses updated values
+      invalidateSymbolWeightCache(symbol);
+    }
+
     logger.debug(
-      { signalId, outcome, factorsUpdated: relevant.length },
-      "Factor weights updated from auto-resolved signal",
+      { signalId, symbol, outcome, factorsUpdated: relevant.length },
+      "Factor weights updated (global + per-symbol)",
     );
   } catch (err) {
     logger.warn({ err, signalId }, "Weight update from signal failed (non-fatal)");

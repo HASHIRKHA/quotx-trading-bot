@@ -6,7 +6,7 @@ import { fetchAndCacheCandles } from "../lib/datastore.js";
 import { fetchTwelveDataQuote } from "../lib/twelvedata-rest.js";
 import { fetchFreePrices } from "../lib/freePriceFeed.js";
 import { GetHistoricalDataQueryParams } from "@workspace/api-zod";
-import { logSignal, detectRegime, getFactorWeights } from "../lib/learningEngine.js";
+import { logSignal, detectRegime, getFactorWeightsBySymbol } from "../lib/learningEngine.js";
 import { getAllQuotexSignals, getQuotexSignal, getQuotexAssetForSymbol } from "../lib/quotexFeed.js";
 
 const router: IRouter = Router();
@@ -324,13 +324,14 @@ router.get("/market/signal/*splat", async (req, res): Promise<void> => {
     return;
   }
 
-  // Fetch sentiment + learned factor weights in parallel (both cached — no added latency)
+  // Fetch sentiment + per-symbol learned factor weights in parallel (both cached — no added latency)
+  // Per-symbol weights take priority over global weights; globals fill cold-start gaps.
   let sentimentBias: string | undefined;
   let factorWeights: Map<string, number> = new Map();
   try {
     const [sentiment, weights] = await Promise.all([
       getSentiment(symbol),
-      getFactorWeights(),
+      getFactorWeightsBySymbol(symbol),
     ]);
     sentimentBias = sentiment.label;
     factorWeights = weights;
