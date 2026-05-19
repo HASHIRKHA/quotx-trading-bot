@@ -9,13 +9,13 @@ import NotFound from "@/pages/not-found";
 import { setBaseUrl } from "@workspace/api-client-react";
 
 // Point the generated API client at the Railway backend in production.
-// VITE_API_URL = "https://your-app.railway.app" — set in Vercel env vars.
-// In development, empty string → relative paths → Vite proxy → localhost:3001.
-const _prodApiUrl = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
-const API_BASE = _prodApiUrl.replace(/\/+$/, '') || '';
+// Priority: VITE_API_URL env var → hardcoded Railway URL (prod) → '' (dev proxy)
+const _envApiUrl = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
+const RAILWAY_URL = 'https://api-production-33aa.up.railway.app';
+const API_BASE = _envApiUrl.replace(/\/+$/, '') || (import.meta.env.PROD ? RAILWAY_URL : '');
 setBaseUrl(API_BASE || null);
 
-// Expose the API base URL globally so components using raw fetch() can prefix it.
+// Expose the API base URL globally so ALL components (raw fetch + WebSocket) use it.
 (window as any).__QUOTX_API_BASE__ = API_BASE;
 
 // ── Error boundary: catch render errors and show them instead of a blank screen
