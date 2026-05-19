@@ -10,6 +10,7 @@ import { fetchFreePrices, fetchBinanceCandles, fetchYahooCandles } from "./lib/f
 import { generateSeedCandles } from "./lib/seedCandles.js";
 import { seedAllSymbolsToSupabase, startCandleFlush } from "./lib/candlePersister.js";
 import { startAutoResolver } from "./lib/autoResolver.js";
+import { startSignalSweeper } from "./lib/signalSweeper.js";
 
 const rawPort = process.env["PORT"];
 
@@ -155,6 +156,13 @@ server.listen(port, () => { void (async () => {
   // movement and records WIN/LOSS outcomes — no trade required.
   // This feeds the EMA factor-weight updater so accuracy improves over time.
   startAutoResolver();
+
+  // ── Signal sweeper: generates training data for ALL pairs × ALL timeframes ──
+  // Every 60 s, runs analyzeSignal() for every symbol × [1m, 5m, 10m] using
+  // cached candle data (no external HTTP calls).  Logs directional signals with
+  // entry_price so the auto-resolver can verify outcomes and update per-symbol
+  // factor weights — even for pairs the user has never opened in the terminal.
+  startSignalSweeper();
 
   // ── Step 3b: Connect to Quotex WebSocket for exact candle matching.
   // If QUOTEX_EMAIL+PASSWORD or QUOTEX_SESSION are set, connect to market-qx.trade

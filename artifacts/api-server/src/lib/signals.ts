@@ -317,29 +317,48 @@ function predictGhostCandle(
   candles: OHLC[],
   direction: "UP" | "DOWN",
   confidence: number,
+  intervalSecs = 60,
 ): GhostCandle {
   const n = candles.length;
   const lastClose = candles[n - 1].close;
-  const atr = calcATR(candles);
-  const scale = atr * (confidence / 100);
+
+  // Use both short-term (5-bar) and medium-term (14-bar) ATR — blend them so
+  // recent volatility matters more than the long average.
+  const atrFull  = calcATR(candles);
+  const atrShort = candles.length >= 5 ? calcATR(candles.slice(-5)) : atrFull;
+  const atr = atrShort * 0.6 + atrFull * 0.4;
+
+  // Confidence → body size.  42 % → tight body (35% of ATR), 96 % → full body (90%).
+  // This makes high-confidence signals produce large, clean candles and low-confidence
+  // signals produce small, realistic ones — not just noise.
+  const confNorm  = Math.min(1, Math.max(0, (confidence - 42) / (96 - 42)));
+  const bodyRatio = 0.35 + confNorm * 0.55;   // 0.35 → 0.90
+  const wickRatio = (1 - bodyRatio) * 0.25;   // tiny wicks proportional to leftover
+
+  const bodySize = atr * bodyRatio;
+  const topWick  = atr * wickRatio;
+  const botWick  = atr * wickRatio * 0.6;     // bottom wick slightly shorter
+
+  // Align to the NEXT interval boundary (not just next minute).
+  // A 5m signal should show a candle starting at the next 5m bar, etc.
   const now = Math.floor(Date.now() / 1000);
-  const nextMinute = Math.floor(now / 60) * 60 + 60;
+  const nextBoundary = Math.floor(now / intervalSecs) * intervalSecs + intervalSecs;
 
   if (direction === "UP") {
     return {
-      time: nextMinute,
-      open: lastClose,
-      high: lastClose + scale * 0.75,
-      low: lastClose - scale * 0.15,
-      close: lastClose + scale * 0.5,
+      time:  nextBoundary,
+      open:  lastClose,
+      high:  lastClose + bodySize + topWick,
+      low:   lastClose - botWick,
+      close: lastClose + bodySize,
     };
   } else {
     return {
-      time: nextMinute,
-      open: lastClose,
-      high: lastClose + scale * 0.15,
-      low: lastClose - scale * 0.75,
-      close: lastClose - scale * 0.5,
+      time:  nextBoundary,
+      open:  lastClose,
+      high:  lastClose + botWick,
+      low:   lastClose - bodySize - topWick,
+      close: lastClose - bodySize,
     };
   }
 }
@@ -810,7 +829,7 @@ export function analyzeSignal(
   }
 
   const confidence = Math.min(96, Math.max(MIN_CONFIDENCE, rawConf));
-  const ghostCandle = finalDir !== "NEUTRAL" ? predictGhostCandle(candles, finalDir as "UP" | "DOWN", confidence) : null;
+  const ghostCandle = finalDir !== "NEUTRAL" ? predictGhostCandle(candles, finalDir as "UP" | "DOWN", confidence, intervalSecs) : null;
 
   return {
     direction: finalDir as "UP" | "DOWN" | "NEUTRAL",
