@@ -25,18 +25,17 @@ const SYMBOLS = [
 ];
 
 function getApiBase(): string {
-  // In production (Vercel), VITE_API_URL points to the Railway backend.
-  // In development, an empty string makes all fetches relative — Vite proxy handles them.
-  const apiUrl = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
-  return apiUrl.replace(/\/+$/, '');
+  // window.__QUOTX_API_BASE__ is injected by App.tsx at runtime — works on Vercel + dev.
+  // Falls back to empty string so Vite proxy handles local dev requests.
+  const base = (window as any).__QUOTX_API_BASE__ as string | undefined;
+  return (base ?? '').replace(/\/+$/, '');
 }
 
 function getWsUrl(): string {
-  const apiUrl = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
-  if (apiUrl) {
+  const base = getApiBase();
+  if (base) {
     // Convert https:// → wss://, http:// → ws://
-    const wsBase = apiUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:').replace(/\/+$/, '');
-    return `${wsBase}/ws`;
+    return base.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:') + '/ws';
   }
   // Dev fallback: same host, Vite proxy forwards to localhost:3001
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
