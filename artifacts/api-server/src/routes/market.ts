@@ -434,7 +434,8 @@ router.get("/market/signal/*splat", async (req, res): Promise<void> => {
   const currentPrice = getPrice(symbol) || candles[candles.length - 1].close;
 
   // ── Fire-and-forget: log signal to Supabase for learning system ───────────
-  // Never awaited — DB latency must never block the HTTP response.
+  // entry_price is stored so the auto-resolver can verify the prediction later
+  // without a trade being placed — every signal becomes a training sample.
   const regime = detectRegime(signal.indicators);
   logSignal(
     symbol,
@@ -444,7 +445,8 @@ router.get("/market/signal/*splat", async (req, res): Promise<void> => {
     signal.factors,
     signal.indicators,
     regime,
-    null, // trade_id linked later via linkSignalToTrade after POST /trades
+    null,         // trade_id linked later via linkLastSignalToTrade after POST /trades
+    currentPrice, // entry_price — enables autonomous outcome verification
   ).catch(() => { /* non-fatal */ });
 
   res.json({
@@ -506,6 +508,161 @@ router.get("/market/quotex-signals/:asset/:period", (req, res): void => {
     return;
   }
   res.json(signal);
+});
+
+// ── Learning / accuracy analytics ─────────────────────────────────────────────
+
+const SUPABASE_URL_MARKET      = process.env.SUPABASE_URL      ?? "";
+const SUPABASE_ANON_KEY_MARKET = process.env.SUPABASE_ANON_KEY ?? "";
+
+async function sbGetMarket<T>(path: string): Promise<T> {
+  const res = await fetch(`${SUPABASE_URL_MARKET}/rest/v1/${path}`, {
+    headers: {
+      apikey:         SUPABASE_ANON_KEY_MARKET,
+      Authorization:  `Bearer ${SUPABASE_ANON_KEY_MARKET}`,
+      "Content-Type": "application/json",
+    },
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!res.ok) throw new Error(`SB GET ${path} → ${res.status}: ${await res.text()}`);
+  return res.json() as Promise<T>;
+}
+
+/**
+ * GET /api/market/learning
+ * Returns the state of the self-learning system:
+ * overall accuracy, per-factor win rates & weights, recent trend,
+ * best performing symbols and time regimes.
+ */
+router.get("/market/learning", async (_req, res): Promise<void> => {
+  if (!SUPABASE_URL_MARKET || !SUPABASE_ANON_KEY_MARKET) {
+    res.status(503).json({ error: "Learning system offline — Supabase not configured" });
+    return;
+  }
+
+  try {
+    // Fetch in parallel for speed
+    const [factorRows, recentSignals, summaryRows] = await Promise.all([
+      // Factor weights + performance
+      sbGetMarket<Array<{
+        factor_name: string; weight: number; win_rate: number;
+        sample_count: number; last_updated: string;
+      }>>("factor_weights?select=factor_name,weight,win_rate,sample_count,last_updated&order=win_rate.desc"),
+
+      // Last 200 resolved directional signals for trend analysis
+      sbGetMarket<Array<{
+        id: number; symbol: string; direction: string; confidence: number;
+        outcome: string; regime: string; interval_secs: number; created_at: string;
+        auto_resolved: boolean;
+      }>>(
+        "signals?outcome=not.is.null&direction=neq.NEUTRAL" +
+        "&select=id,symbol,direction,confidence,outcome,regime,interval_secs,created_at,auto_resolved" +
+        "&order=created_at.desc&limit=200",
+      ),
+
+      // Total counts
+      sbGetMarket<Array<{ outcome: string; count: number }>>(
+        "signals?direction=neq.NEUTRAL&select=outcome&order=outcome.asc",
+      ),
+    ]);
+
+    // ── Overall stats ──────────────────────────────────────────────────────────
+    const resolved = recentSignals.filter((s) => s.outcome === "WIN" || s.outcome === "LOSS");
+    const wins200  = resolved.filter((s) => s.outcome === "WIN").length;
+    const totalResolved = summaryRows.filter((r) => r.outcome === "WIN" || r.outcome === "LOSS").length;
+    const totalWins     = summaryRows.filter((r) => r.outcome === "WIN").length;
+    const totalSignals  = summaryRows.length;
+    const totalPending  = summaryRows.filter((r) => r.outcome === null).length;
+    const autoResolved  = recentSignals.filter((s) => s.auto_resolved).length;
+
+    // ── Recent accuracy windows ────────────────────────────────────────────────
+    const win = (arr: typeof resolved) =>
+      arr.length > 0 ? Math.round((arr.filter((s) => s.outcome === "WIN").length / arr.length) * 1000) / 10 : null;
+
+    const last10  = resolved.slice(0, 10);
+    const last50  = resolved.slice(0, 50);
+    const last100 = resolved.slice(0, 100);
+
+    // ── By symbol ─────────────────────────────────────────────────────────────
+    const symMap = new Map<string, { wins: number; total: number }>();
+    for (const s of resolved) {
+      const e = symMap.get(s.symbol) ?? { wins: 0, total: 0 };
+      e.total++;
+      if (s.outcome === "WIN") e.wins++;
+      symMap.set(s.symbol, e);
+    }
+    const bySymbol = [...symMap.entries()]
+      .map(([symbol, { wins, total }]) => ({
+        symbol, wins, total, winRate: Math.round((wins / total) * 1000) / 10,
+      }))
+      .sort((a, b) => b.winRate - a.winRate)
+      .slice(0, 10);
+
+    // ── By regime ─────────────────────────────────────────────────────────────
+    const regimeMap = new Map<string, { wins: number; total: number }>();
+    for (const s of resolved) {
+      const regime = s.regime ?? "unknown";
+      const e = regimeMap.get(regime) ?? { wins: 0, total: 0 };
+      e.total++;
+      if (s.outcome === "WIN") e.wins++;
+      regimeMap.set(regime, e);
+    }
+    const byRegime = Object.fromEntries(
+      [...regimeMap.entries()].map(([regime, { wins, total }]) => [
+        regime,
+        { wins, total, winRate: Math.round((wins / total) * 1000) / 10 },
+      ]),
+    );
+
+    // ── By interval ───────────────────────────────────────────────────────────
+    const intMap = new Map<number, { wins: number; total: number }>();
+    for (const s of resolved) {
+      const e = intMap.get(s.interval_secs) ?? { wins: 0, total: 0 };
+      e.total++;
+      if (s.outcome === "WIN") e.wins++;
+      intMap.set(s.interval_secs, e);
+    }
+    const byInterval = [...intMap.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([secs, { wins, total }]) => ({
+        intervalSecs: secs,
+        label: secs === 60 ? "1m" : secs === 300 ? "5m" : secs === 600 ? "10m" : `${secs}s`,
+        wins, total, winRate: Math.round((wins / total) * 1000) / 10,
+      }));
+
+    // ── Factor rankings ────────────────────────────────────────────────────────
+    const factors = factorRows.map((f) => ({
+      name:         f.factor_name,
+      weight:       parseFloat(Number(f.weight).toFixed(3)),
+      winRate:      Math.round(Number(f.win_rate) * 1000) / 10,
+      sampleCount:  f.sample_count,
+      lastUpdated:  f.last_updated,
+      strength:     Number(f.weight) > 1.1 ? "strong" : Number(f.weight) < 0.9 ? "weak" : "neutral",
+    }));
+
+    res.json({
+      totalSignals,
+      totalResolved,
+      totalPending,
+      totalWins,
+      overallWinRate: totalResolved > 0 ? Math.round((totalWins / totalResolved) * 1000) / 10 : null,
+      autoResolved,
+      recentAccuracy: {
+        last10:  win(last10),
+        last50:  win(last50),
+        last100: win(last100),
+        recent200WinRate: win(resolved),
+      },
+      factors,
+      bySymbol,
+      byRegime,
+      byInterval,
+      learningActive: true,
+      resolverInterval: "60s",
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Learning stats unavailable", detail: String(err) });
+  }
 });
 
 export default router;

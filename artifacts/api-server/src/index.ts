@@ -9,6 +9,7 @@ import { fetchAndCacheCandles } from "./lib/datastore.js";
 import { fetchFreePrices, fetchBinanceCandles, fetchYahooCandles } from "./lib/freePriceFeed.js";
 import { generateSeedCandles } from "./lib/seedCandles.js";
 import { seedAllSymbolsToSupabase, startCandleFlush } from "./lib/candlePersister.js";
+import { startAutoResolver } from "./lib/autoResolver.js";
 
 const rawPort = process.env["PORT"];
 
@@ -148,6 +149,12 @@ server.listen(port, () => { void (async () => {
     logger.warn({ err }, "Candle seeding failed — flush will still start");
     startCandleFlush();
   });
+
+  // ── Signal auto-resolver: autonomous learning loop ────────────────────────
+  // Every 60 s, compares outstanding signal predictions to actual price
+  // movement and records WIN/LOSS outcomes — no trade required.
+  // This feeds the EMA factor-weight updater so accuracy improves over time.
+  startAutoResolver();
 
   // ── Step 3b: Connect to Quotex WebSocket for exact candle matching.
   // If QUOTEX_EMAIL+PASSWORD or QUOTEX_SESSION are set, connect to market-qx.trade

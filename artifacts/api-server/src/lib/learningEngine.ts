@@ -120,6 +120,7 @@ interface SignalInsert {
   factors:        FactorResult[];
   indicators:     IndicatorValues;
   regime:         string;
+  entry_price?:   number | null;
 }
 
 interface SignalRow {
@@ -147,6 +148,7 @@ export async function logSignal(
   indicators:    IndicatorValues,
   regime:        string,
   tradeId?:      number | null,
+  entryPrice?:   number | null,
 ): Promise<number | null> {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
 
@@ -160,6 +162,7 @@ export async function logSignal(
       factors:      factors as unknown as FactorResult[],
       indicators,
       regime,
+      entry_price:  entryPrice ?? null,
     };
 
     const rows = await sbPost<SignalRow[]>("signals", payload);
@@ -345,4 +348,98 @@ export function detectRegime(indicators: IndicatorValues): string {
   if (volatility > 0.015) return "volatile";
   if (volumeRatio > 1.3)  return "trending";
   return "ranging";
+}
+
+// ── Autonomous weight update from resolved signals ────────────────────────────
+// Called by autoResolver.ts after every auto-resolved signal.
+// Uses exponential moving average (α=0.08) to slowly converge factor weights
+// toward 1.5 (consistently winning factors) or 0.65 (consistently losing ones).
+// TIE outcomes are ignored — no weight change.
+
+const EMA_ALPHA   = 0.08;  // slow adaptation — avoids overfitting to streaks
+const WIN_TARGET  = 1.50;  // multiplier ceiling trend for winning factors
+const LOSS_TARGET = 0.65;  // multiplier floor trend for losing factors
+const WEIGHT_MIN  = 0.30;  // never reduce a factor below 30% of base weight
+const WEIGHT_MAX  = 2.50;  // never amplify a factor above 250% of base weight
+
+interface FactorWeightRow {
+  factor_name:  string;
+  weight:       number;
+  win_rate:     number;
+  sample_count: number;
+}
+
+/**
+ * Updates factor_weights in Supabase based on a resolved signal's outcome.
+ * Only factors that were CONFIRMED and aligned with the signal direction
+ * receive an update — unconfirmed / neutral factors are not penalised.
+ * Fire-and-forget safe — never throws.
+ */
+export async function updateWeightsFromResolvedSignal(
+  signalId:        number,
+  signalDirection: string,
+  outcome:         "WIN" | "LOSS" | "TIE",
+  factors:         FactorResult[],
+): Promise<void> {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
+  if (outcome === "TIE") return; // ties carry no learning signal
+
+  try {
+    // Only update factors that were confirmed AND pointed in the same direction as the signal
+    const relevant = factors.filter(
+      (f) => f.confirmed && f.direction === signalDirection,
+    );
+    if (relevant.length === 0) return;
+
+    // Load current weights for these factors in one request
+    const names   = relevant.map((f) => encodeURIComponent(f.name)).join(",");
+    const current = await sbGet<FactorWeightRow[]>(
+      `factor_weights?factor_name=in.(${names})&select=factor_name,weight,win_rate,sample_count`,
+    );
+    const weightMap = new Map(current.map((r) => [r.factor_name, r]));
+
+    const isWin = outcome === "WIN";
+
+    for (const factor of relevant) {
+      const row = weightMap.get(factor.name) ?? {
+        factor_name:  factor.name,
+        weight:       1.0,
+        win_rate:     0.5,
+        sample_count: 0,
+      };
+
+      // Running win-rate (incremental average)
+      const newSamples = Number(row.sample_count) + 1;
+      const prevWins   = Math.round(Number(row.win_rate) * Number(row.sample_count));
+      const newWins    = prevWins + (isWin ? 1 : 0);
+      const newWinRate = newWins / newSamples;
+
+      // EMA toward win/loss target
+      const newWeight = Math.max(
+        WEIGHT_MIN,
+        Math.min(
+          WEIGHT_MAX,
+          (1 - EMA_ALPHA) * Number(row.weight) + EMA_ALPHA * (isWin ? WIN_TARGET : LOSS_TARGET),
+        ),
+      );
+
+      // PATCH existing row (factor_weights has unique constraint on factor_name)
+      await sbPatch<unknown>(
+        `factor_weights?factor_name=eq.${encodeURIComponent(factor.name)}`,
+        {
+          weight:       parseFloat(newWeight.toFixed(4)),
+          win_rate:     parseFloat(newWinRate.toFixed(4)),
+          sample_count: newSamples,
+          last_updated: new Date().toISOString(),
+        },
+      );
+    }
+
+    logger.debug(
+      { signalId, outcome, factorsUpdated: relevant.length },
+      "Factor weights updated from auto-resolved signal",
+    );
+  } catch (err) {
+    logger.warn({ err, signalId }, "Weight update from signal failed (non-fatal)");
+  }
 }
