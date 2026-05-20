@@ -11,6 +11,7 @@ import { generateSeedCandles } from "./lib/seedCandles.js";
 import { seedAllSymbolsToSupabase, startCandleFlush } from "./lib/candlePersister.js";
 import { startAutoResolver } from "./lib/autoResolver.js";
 import { startSignalSweeper } from "./lib/signalSweeper.js";
+import { startSignalCleanup } from "./lib/signalCleanup.js";
 
 const rawPort = process.env["PORT"];
 
@@ -163,6 +164,13 @@ server.listen(port, () => { void (async () => {
   // entry_price so the auto-resolver can verify outcomes and update per-symbol
   // factor weights — even for pairs the user has never opened in the terminal.
   startSignalSweeper();
+
+  // ── DB retention: keeps Supabase within the 500 MB free tier ─────────────
+  // Fires 3 min after startup (sweeper warm-up), then every 60 min.
+  // Archives resolved signal counts to signal_stats → prunes raw rows > 12h old.
+  // Also prunes quotex_signals_log rows > 3 days old.
+  // Logs DB % used; WARN at 70%, ERROR at 85%.
+  startSignalCleanup();
 
   // ── Step 3b: Connect to Quotex WebSocket for exact candle matching.
   // If QUOTEX_EMAIL+PASSWORD or QUOTEX_SESSION are set, connect to market-qx.trade
